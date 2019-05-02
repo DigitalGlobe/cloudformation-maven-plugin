@@ -1,0 +1,17 @@
+<!DOCTYPE suite SYSTEM "http://testng.org/testng-1.0.dtd" >
+
+<suite name="functional" parallel="methods" thread-count="1" data-provider-thread-count="20">
+    <test name="functional">
+        <groups>
+            <run>
+                <include name="functional" />
+                <include name="unit"/>
+                <exclude name="integration" />
+                <exclude name="broken" />
+            </run>
+        </groups>
+        <packages>
+            <package name="com.digitalglobe.util.maven.plugin"/>
+        </packages>
+    </test>
+</suite>

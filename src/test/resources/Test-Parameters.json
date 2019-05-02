@@ -1,0 +1,12 @@
+[
+  {
+    "parameterKey": "s3Bucket",
+    "parameterValue": "INSERT_ARTIFACT_S3_BUCKET",
+    "usePreviousValue": false
+  },
+  {
+    "parameterKey": "s3Key",
+    "parameterValue": "INSERT_ARTIFACT_S3_KEY",
+    "usePreviousValue": false
+  }
+]

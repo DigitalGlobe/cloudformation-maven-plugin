@@ -1,0 +1,16 @@
+<!DOCTYPE suite SYSTEM "http://testng.org/testng-1.0.dtd" >
+
+<suite name="integration" parallel="methods" thread-count="10" data-provider-thread-count="20">
+    <test name="integration">
+        <groups>
+            <run>
+                <include name="integration"/>
+                <exclude name="unit" />
+                <exclude name="broken" />
+            </run>
+        </groups>
+        <packages>
+            <package name="com.digitalglobe.util.maven.plugin"/>
+        </packages>
+    </test>
+</suite>
