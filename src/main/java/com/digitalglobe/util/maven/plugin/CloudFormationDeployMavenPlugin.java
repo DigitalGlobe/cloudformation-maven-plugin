@@ -28,7 +28,7 @@ import com.amazonaws.services.simplesystemsmanagement.model.PutParameterRequest;
 import com.amazonaws.waiters.Waiter;
 import com.amazonaws.waiters.WaiterParameters;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.maxar.utils.ClientBuilder;
+import com.digitalglobe.utils.ClientBuilder;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 
