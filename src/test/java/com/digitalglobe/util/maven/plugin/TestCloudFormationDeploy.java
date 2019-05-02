@@ -1659,13 +1659,27 @@ public class TestCloudFormationDeploy {
         public GetObjectRetentionResult getObjectRetention(GetObjectRetentionRequest getObjectRetentionRequest) {
             return null;
         }
-        //#endregion
+
+        @Override
+        public PresignedUrlDownloadResult download(PresignedUrlDownloadRequest presignedUrlDownloadRequest) {
+            return null;
+        }
+
+        @Override
+        public void download(PresignedUrlDownloadRequest presignedUrlDownloadRequest, File file) {
+
+        }
+
+        @Override
+        public PresignedUrlUploadResult upload(PresignedUrlUploadRequest presignedUrlUploadRequest) {
+            return null;
+        }
 
         @Override
         public SelectObjectContentResult selectObjectContent(SelectObjectContentRequest arg0) throws AmazonServiceException, SdkClientException {
-            // TODO Auto-generated method stub
             return null;
         }
+        //#endregion
     }
 
     /**
