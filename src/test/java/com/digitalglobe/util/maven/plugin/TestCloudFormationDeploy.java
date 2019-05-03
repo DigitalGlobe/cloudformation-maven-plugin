@@ -2071,7 +2071,7 @@ public class TestCloudFormationDeploy {
             Assert.assertTrue(lines[position++].equals("Using region: us-east-1"));
 
             Assert.assertTrue(lines[position].toString().startsWith("Executing: java -jar "));
-            Assert.assertTrue(lines[position++].toString().endsWith("CloudFormationDeploy/test-repository/com/test/" +
+            Assert.assertTrue(lines[position++].toString().endsWith("cloudformation-maven-plugin/test-repository/com/test/" +
                     "application-test/1.0/application-test-1.0.jar"));
         }
 
