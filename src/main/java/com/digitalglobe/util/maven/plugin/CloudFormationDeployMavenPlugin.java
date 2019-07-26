@@ -625,7 +625,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
          *
          * @parameter region is the region in AWS to connect to.
          */
-        private String region = Regions.getCurrentRegion().toString();
+        private String region = null;
 
         /**
          * Sets the role to use with this stack.
@@ -975,7 +975,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
     /**
      * Used to specify a region for the stack to be created in.
      */
-    private String region = Regions.getCurrentRegion().toString();
+    private String region = null;
 
     /**
      * Use this method to create or update a CloudFormation Stack based on specified input parameters.
@@ -1081,10 +1081,10 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                 s3Client.putObject(templateRequest);
 
                 AmazonCloudFormation cfClient = (sessionCredentials != null) ?
-                        (region.equals(Regions.getCurrentRegion().toString()) ?
+                        (region == null ?
                                 new ClientBuilder<AmazonCloudFormation>().build(cfBuilder, sessionCredentials) :
                                 new ClientBuilder<AmazonCloudFormation>().withRegion(region.toString()).build(cfBuilder, sessionCredentials)) :
-                        (region.equals(Regions.getCurrentRegion().toString()) ?
+                        (region == null ?
                                 new ClientBuilder<AmazonCloudFormation>().build(cfBuilder) :
                                 new ClientBuilder<AmazonCloudFormation>().withRegion(region.toString()).build(cfBuilder));
 
@@ -1132,7 +1132,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
                             stackCredentials = getAwsCredentialsProvider(stack.roleArn);
 
-                            tempCfClient = region.equals(Regions.getCurrentRegion().toString()) ?
+                            tempCfClient = region == null ?
                                     new ClientBuilder<AmazonCloudFormation>().build(cfBuilder, stackCredentials) :
                                     new ClientBuilder<AmazonCloudFormation>().withRegion(stack.region.toString()).build(cfBuilder, stackCredentials);
 
