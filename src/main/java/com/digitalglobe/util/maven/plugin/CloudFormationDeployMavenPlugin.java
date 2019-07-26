@@ -1081,13 +1081,14 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                 s3Client.putObject(templateRequest);
 
                 AmazonCloudFormation cfClient;
+                System.out.println("Region: " + (region == null ? "Empty" : region));
                 if(sessionCredentials != null) cfClient = (region == null) ?
                         new ClientBuilder<AmazonCloudFormation>().build(cfBuilder, sessionCredentials) :
                         new ClientBuilder<AmazonCloudFormation>().withRegion(region).build(cfBuilder, sessionCredentials);
 
-                else cfClient = (region != null) ?
-                        new ClientBuilder<AmazonCloudFormation>().withRegion(region).build(cfBuilder) :
-                        new ClientBuilder<AmazonCloudFormation>().build(cfBuilder);
+                else cfClient = (region == null) ?
+                        new ClientBuilder<AmazonCloudFormation>().build(cfBuilder) :
+                        new ClientBuilder<AmazonCloudFormation>().withRegion(region).build(cfBuilder);
 
                 // Read in the cloud formation template.
                 audit.write("Stack Parameter Path: " + stackParameterFilePaths[itemCount] + "\n");
