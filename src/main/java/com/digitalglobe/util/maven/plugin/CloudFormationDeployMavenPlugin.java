@@ -204,26 +204,6 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
         }
     }
 
-    public enum RegionEnum {
-
-        DEFAULT("default"),
-        USEAST1("us-east-1"),
-        USEAST2("us-east-2");
-
-        private final String region;
-
-        RegionEnum(String region) {
-
-            this.region = region;
-        }
-
-        @Override
-        public String toString() {
-
-            return this.region;
-        }
-    }
-
     /**
      * Use this class to hold information about special mapping of output parameters or where to store the output
      * parameters for future reference.
@@ -645,7 +625,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
          *
          * @parameter region is the region in AWS to connect to.
          */
-        private RegionEnum region = RegionEnum.DEFAULT;
+        private String region = Regions.getCurrentRegion().toString();
 
         /**
          * Sets the role to use with this stack.
@@ -995,7 +975,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
     /**
      * Used to specify a region for the stack to be created in.
      */
-    private RegionEnum region = RegionEnum.DEFAULT;
+    private String region = Regions.getCurrentRegion().toString();
 
     /**
      * Use this method to create or update a CloudFormation Stack based on specified input parameters.
@@ -1101,10 +1081,10 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                 s3Client.putObject(templateRequest);
 
                 AmazonCloudFormation cfClient = (sessionCredentials != null) ?
-                        (region == RegionEnum.DEFAULT ?
+                        (region.equals(Regions.getCurrentRegion().toString()) ?
                                 new ClientBuilder<AmazonCloudFormation>().build(cfBuilder, sessionCredentials) :
                                 new ClientBuilder<AmazonCloudFormation>().withRegion(region.toString()).build(cfBuilder, sessionCredentials)) :
-                        (region == RegionEnum.DEFAULT ?
+                        (region.equals(Regions.getCurrentRegion().toString()) ?
                                 new ClientBuilder<AmazonCloudFormation>().build(cfBuilder) :
                                 new ClientBuilder<AmazonCloudFormation>().withRegion(region.toString()).build(cfBuilder));
 
@@ -1152,7 +1132,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
                             stackCredentials = getAwsCredentialsProvider(stack.roleArn);
 
-                            tempCfClient = region == RegionEnum.DEFAULT ?
+                            tempCfClient = region.equals(Regions.getCurrentRegion().toString()) ?
                                     new ClientBuilder<AmazonCloudFormation>().build(cfBuilder, stackCredentials) :
                                     new ClientBuilder<AmazonCloudFormation>().withRegion(stack.region.toString()).build(cfBuilder, stackCredentials);
 
