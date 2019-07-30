@@ -1361,10 +1361,10 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
 
             processOutputParameters(cfClient, stackName, credentials, ssmClient, outputParameters,
-                    outputParameterMappings);
+                    outputParameterMappings, region);
 
             processCommandOutputParameters(credentials, ssmClient, outputParameters,
-                    cliCommandOutputParameterMappings);
+                    cliCommandOutputParameterMappings, region);
 
         } else {
 
@@ -1490,6 +1490,8 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
      * @param credentials is a default set of credentials.
      * @param outputParameters is the output parameters array to populate with the results from the command.
      * @param parameterMappings are the mappings to execute.
+     * @param ssmClient is the client to use for the parameter store.
+     * @param region is the region to store parameters in.
      * @throws IOException when an exception occurs while reading/writing to process or file system.
      * @throws InterruptedException when the operating system interrupts the process execution.
      * @throws ClassCastException when the parameter isn't a string.  This should never happen (bug if it does).
@@ -1498,7 +1500,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
     private void processCommandOutputParameters(AWSCredentialsProvider credentials,
                                                 AWSSimpleSystemsManagement ssmClient,
                                                 Map<String, String> outputParameters,
-                                                CliCommandOutputParameterMapping[] parameterMappings)
+                                                CliCommandOutputParameterMapping[] parameterMappings, String region)
             throws IOException, InterruptedException, MojoExecutionException, ClassCastException {
 
         if(parameterMappings != null) {
@@ -1637,7 +1639,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
                             //noinspection ConstantConditions
                             ProcessMapping(outputParameters, ssmClient, key, (String) parameter,
-                                    mapping.parameters.get(key));
+                                    mapping.parameters.get(key), region);
                         }
                     }
                 }
@@ -1777,13 +1779,17 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
      * @param cfClient is the CloudFormation Client to use.
      * @param stackName is the name of the stack to fetch the output parameters from.
      * @param outputParameters is the array of output parameters to put the parameters into.
+     * @param region is the region to store the parameter.
+     * @param credentials are the credentials to use when connecting to AWS APIs.
+     * @param outputParameterMappings is the mapping to use when determine parameter name and parameter value
+     * @param ssmClient is the client to use when updating the parameter store.
      * @throws IOException when the routine is unable to assume a role.
      * @throws MojoExecutionException when a logic or validation error occurs with assuming a role.
      */
     private void processOutputParameters(AmazonCloudFormation cfClient, String stackName,
                                          AWSCredentialsProvider credentials, AWSSimpleSystemsManagement ssmClient,
                                          Map<String, String> outputParameters,
-                                         StackOutputParameterMapping[] outputParameterMappings)
+                                         StackOutputParameterMapping[] outputParameterMappings, String region)
             throws IOException, MojoExecutionException {
 
         boolean retry;
@@ -1821,7 +1827,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                     if(masterOutput.getOutputKey().equals(mapping.parameterName)) {
 
                         mapped = ProcessMapping(outputParameters, ssmClient, masterOutput.getOutputKey(),
-                                masterOutput.getOutputValue(), mapping);
+                                masterOutput.getOutputValue(), mapping, region);
                     }
                 }
             }
@@ -1883,12 +1889,14 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
      * @param ssmClient is the client to use when writing parameters to the parameter store.
      * @param parameterName is name of the parameter from the CloudFormation Template or CLI Command.
      * @param mapping is the mapping to process.
+     * @param parameterValue is the value of the parameter.
+     * @param region is the region to store the parameter.
      * @return a boolean indicating if the mapping was processed (It had no restrictions).
      * @throws MojoExecutionException when a processing error occurs in the method.
      * @throws IOException when the method is unable to read/write to the parameter store.
      */
     private Boolean ProcessMapping(Map<String, String> outputParameters, AWSSimpleSystemsManagement ssmClient,
-                                   String parameterName, String parameterValue, StackOutputParameterMapping mapping)
+                                   String parameterName, String parameterValue, StackOutputParameterMapping mapping, String region)
             throws MojoExecutionException, IOException {
 
         // Check for mapping restriction by looking at the condition for executing the mapping.
@@ -1915,7 +1923,9 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
                     AWSCredentialsProvider session = getAwsCredentialsProvider(mapping.roleArn);
 
-                    client = new ClientBuilder<AWSSimpleSystemsManagement>().build(ssmBuilder, session);
+                    client = region != null ?
+                            new ClientBuilder<AWSSimpleSystemsManagement>().withRegion(region).build(ssmBuilder, session) :
+                            new ClientBuilder<AWSSimpleSystemsManagement>().build(ssmBuilder, session);
                 }
 
                 boolean update = false;
