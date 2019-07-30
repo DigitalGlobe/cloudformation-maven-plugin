@@ -1098,7 +1098,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                     ExecuteTemplate(stackReadOnly, templateUrl, stackParameterFilePaths[itemCount], cfClient, s3Client,
                             stackName, null, null, sessionCredentials, inputParameters,
                             masterOutputParameters, outputParameterMappings, cliCommandOutputParameterMappings,
-                            null);
+                            null, region);
                 }
 
                 if(artifacts && (copyAction == ArtifactCopyAction.AFTER)) {
@@ -1160,7 +1160,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                                     tempCfClient, s3Client, secondaryStackName, stack.condition,
                                     stack.deploymentArtifactRegEx, stackCredentials, stack.inputParameters,
                                     outputParameters, stack.outputParameterMappings,
-                                    stack.cliCommandOutputParameterMappings, stack.checkCondition);
+                                    stack.cliCommandOutputParameterMappings, stack.checkCondition, stack.region);
                         }
                     }
                 }
@@ -1290,6 +1290,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
      * @param outputParameterMappings are the mappings to apply to output parameters.
      * @param cliCommandOutputParameterMappings is a set of CLI command to run to retrieve output parameters.
      * @param checkCondition is a condition to check against the value of an output parameter.
+     * @param region is the region to use for executing templates and storing parameters.
      * @throws IOException when the parameter file can't be read from.
      * @throws InterruptedException when the operating system interrupts the execution of a CLI Command.
      * @throws NoSuchAlgorithmException when it to calculate a file hash.
@@ -1301,7 +1302,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                                  StackInputParameter[] inputParameters, Map<String, String> outputParameters,
                                  StackOutputParameterMapping[] outputParameterMappings,
                                  CliCommandOutputParameterMapping[] cliCommandOutputParameterMappings,
-                                 ParameterValueCheckCondition checkCondition)
+                                 ParameterValueCheckCondition checkCondition, String region)
             throws IOException, InterruptedException, NoSuchAlgorithmException, MojoExecutionException {
 
         // Determine if the stack exists.
@@ -1349,7 +1350,12 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
             System.out.println();
 
             // Add output parameters from the stack run and optionally save them to the Parameter Store.
-            AWSSimpleSystemsManagement ssmClient = (credentials != null) ?
+            AWSSimpleSystemsManagement ssmClient;
+            if(region != null) ssmClient = (credentials != null) ?
+                    new ClientBuilder<AWSSimpleSystemsManagement>().withRegion(region).build(ssmBuilder, credentials) :
+                    new ClientBuilder<AWSSimpleSystemsManagement>().withRegion(region).build((ssmBuilder));
+
+            else ssmClient = (credentials != null) ?
                     new ClientBuilder<AWSSimpleSystemsManagement>().build(ssmBuilder, credentials) :
                     new ClientBuilder<AWSSimpleSystemsManagement>().build(ssmBuilder);
 
