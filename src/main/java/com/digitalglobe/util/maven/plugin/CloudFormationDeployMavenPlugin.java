@@ -137,8 +137,9 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
         /**
          * The value of the parameter.  This field is conditionally optional.  The POM file must contain a
          * matching parameter name, a parameter store field name or a parameter value.  The POM file may contain
-         * both a matching parameter name and a parameter value.  The matching name takes precedence but the
-         * parameter value will be use if the matching parameter doesn't exist.
+         * both a matching parameter name and a parameter value or a parameter field name and a parameter value.
+         * The matching name and parameter store field name takes precedence but the parameter value will be use
+         * if the matching parameter or parameter store parameter doesn't exist.
          *
          * @parameter parameterValue is the value of the output parameter to use.
          */
@@ -148,8 +149,8 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
          * The name of a field in the System Manager Parameter Store to pull a value from and use as an input value.
          * This works similar to a parameter value in that it replace the input field value with a static value.  The
          * difference is that the static value is stored in AWS instead of the POM file.  The POM file must contain a
-         * matching parameter name, a parameter store field name or a parameter value but should not any other field
-         * when parameter store field name is specified.
+         * matching parameter name, a parameter store field name or a parameter value.  It may contain a parameter value
+         * that acts as a default if the parameter is not found in the parameter store.
          *
          * @parameter parameterStoreFieldName contains the name of the field to pull the input value from.
          */
@@ -2289,7 +2290,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
         if((fieldCount == 2) && (paramItem.parameterStoreFieldName != null)) {
 
-            if(paramItem.parameterName == null) throw new MojoExecutionException("Invalid Stack Input Syntax.");
+            if(paramItem.parameterValue == null) throw new MojoExecutionException("Invalid Stack Input Syntax.");
         }
 
         if (paramItem.matchingParameterName != null) {
