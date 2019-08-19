@@ -31,7 +31,7 @@
             <dependency>
                 <groupId>com.amazonaws</groupId>
                 <artifactId>aws-java-sdk-bom</artifactId>
-                <version>1.11.608</version>
+                <version>1.11.613</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -114,7 +114,7 @@
         <dependency>
             <groupId>org.testng</groupId>
             <artifactId>testng</artifactId>
-            <version>7.0.0-beta7</version>
+            <version>7.0.0</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
