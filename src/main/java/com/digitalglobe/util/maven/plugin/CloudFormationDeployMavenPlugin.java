@@ -1125,6 +1125,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                     for(SecondaryStack stack : secondaryStackGroups[itemCount].stacks) {
 
                         // Renew S3 client
+                        System.out.println("Stack Region: " + (stack.region == null ? "Empty" : region));
                         s3Client = (sessionCredentials != null) ?
                                 new ClientBuilder<AmazonS3>().build(s3Builder, sessionCredentials) :
                                 new ClientBuilder<AmazonS3>().build(s3Builder);
