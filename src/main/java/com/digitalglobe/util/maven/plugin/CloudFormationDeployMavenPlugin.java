@@ -1140,7 +1140,15 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                                     new ClientBuilder<AmazonCloudFormation>().build(cfBuilder, stackCredentials) :
                                     new ClientBuilder<AmazonCloudFormation>().withRegion(stack.region).build(cfBuilder, stackCredentials);
 
-                        } else stackCredentials = sessionCredentials;
+                        } else {
+
+                            stackCredentials = sessionCredentials;
+                            if(stack.region != null) {
+                                tempCfClient = stackCredentials == null ?
+                                        new ClientBuilder<AmazonCloudFormation>().withRegion(stack.region).build(cfBuilder) :
+                                        new ClientBuilder<AmazonCloudFormation>().withRegion(stack.region).build(cfBuilder, stackCredentials);
+                            }
+                        }
 
                         // Read in the cloud formation template.
                         String secondaryStackName = (stack.stackName == null) ?
