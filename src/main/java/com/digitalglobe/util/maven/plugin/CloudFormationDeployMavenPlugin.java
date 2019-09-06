@@ -1618,7 +1618,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
                                     matcher = pattern.matcher(element);
                                     if (!matcher.matches())
-                                        throw new MojoExecutionException("Couldn't find parameter.");
+                                        throw new MojoExecutionException("Couldn't find parameter: " + element);
 
                                     String name = matcher.group(1);
                                     if (array != null) {
@@ -1643,7 +1643,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
                                         parameter = mapping.parameters.get(key).defaultParameterValue;
 
-                                    } else throw new MojoExecutionException("Couldn't find parameter.");
+                                    } else throw new MojoExecutionException("Couldn't find parameter: " + key);
                                 }
                             }
 
