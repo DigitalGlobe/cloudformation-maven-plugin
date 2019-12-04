@@ -448,6 +448,11 @@ public class TestCloudFormationDeploy {
         }
 
         @Override
+        public DeregisterTypeResult deregisterType(DeregisterTypeRequest deregisterTypeRequest) {
+            return null;
+        }
+
+        @Override
         public DescribeAccountLimitsResult describeAccountLimits(DescribeAccountLimitsRequest describeAccountLimitsRequest) {
             return null;
         }
@@ -484,6 +489,16 @@ public class TestCloudFormationDeploy {
 
         @Override
         public DescribeStacksResult describeStacks() {
+            return null;
+        }
+
+        @Override
+        public DescribeTypeResult describeType(DescribeTypeRequest describeTypeRequest) {
+            return null;
+        }
+
+        @Override
+        public DescribeTypeRegistrationResult describeTypeRegistration(DescribeTypeRegistrationRequest describeTypeRegistrationRequest) {
             return null;
         }
 
@@ -573,7 +588,37 @@ public class TestCloudFormationDeploy {
         }
 
         @Override
+        public ListTypeRegistrationsResult listTypeRegistrations(ListTypeRegistrationsRequest listTypeRegistrationsRequest) {
+            return null;
+        }
+
+        @Override
+        public ListTypeVersionsResult listTypeVersions(ListTypeVersionsRequest listTypeVersionsRequest) {
+            return null;
+        }
+
+        @Override
+        public ListTypesResult listTypes(ListTypesRequest listTypesRequest) {
+            return null;
+        }
+
+        @Override
+        public RecordHandlerProgressResult recordHandlerProgress(RecordHandlerProgressRequest recordHandlerProgressRequest) {
+            return null;
+        }
+
+        @Override
+        public RegisterTypeResult registerType(RegisterTypeRequest registerTypeRequest) {
+            return null;
+        }
+
+        @Override
         public SetStackPolicyResult setStackPolicy(SetStackPolicyRequest setStackPolicyRequest) {
+            return null;
+        }
+
+        @Override
+        public SetTypeDefaultVersionResult setTypeDefaultVersion(SetTypeDefaultVersionRequest setTypeDefaultVersionRequest) {
             return null;
         }
 
@@ -634,6 +679,11 @@ public class TestCloudFormationDeploy {
 
         @Override
         public DetectStackResourceDriftResult detectStackResourceDrift(DetectStackResourceDriftRequest detectStackResourceDriftRequest) {
+            return null;
+        }
+
+        @Override
+        public DetectStackSetDriftResult detectStackSetDrift(DetectStackSetDriftRequest detectStackSetDriftRequest) {
             return null;
         }
         //#endregion

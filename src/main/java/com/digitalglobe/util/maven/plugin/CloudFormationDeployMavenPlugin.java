@@ -2159,6 +2159,19 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                                     .startsWith("The submitted information didn't contain changes.")) {
 
                                 throw new MojoExecutionException("ChangeSet Error: " + describeStacksResult.getStatusReason());
+
+                            } else {
+
+                                try {
+                                    DeleteChangeSetRequest deleteChangeSetRequest = new DeleteChangeSetRequest()
+                                            .withChangeSetName(changeSetName)
+                                            .withStackName(stackName);
+
+                                    cfClient.deleteChangeSet(deleteChangeSetRequest);
+                                }
+                                catch (Exception dcsex) {
+                                    // Don't care if it isn't able to delete.
+                                }
                             }
 
                             describeRetry = false;
