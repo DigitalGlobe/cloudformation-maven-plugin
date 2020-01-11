@@ -77,6 +77,7 @@ public class ExecuteCommand {
         try {
 
             ProcessBuilder pb = new ProcessBuilder(this.commandInformation);
+            pb.environment().clear();
             pb.environment().putAll(this.environmentMap);
             Process process = pb.start();
 
