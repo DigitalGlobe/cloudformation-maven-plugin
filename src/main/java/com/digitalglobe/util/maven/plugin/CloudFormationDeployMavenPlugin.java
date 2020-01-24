@@ -2041,7 +2041,8 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
             try {
 
-                cfClient.describeStacks(DescribeStacksRequest.builder().stackName(stackName).build()).get();
+                DescribeStacksResponse result = cfClient.describeStacks(DescribeStacksRequest.builder().stackName(stackName).build()).get();
+                if (result.stacks().size() <= 0) cloudFormationExists = false;
 
                 retry = false;
 
@@ -2147,9 +2148,8 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
             try {
 
-                cfAsyncClient.createChangeSet(changeSetRequest).thenRunAsync(() -> {
-                    WaitChangeSet(cfAsyncClient, stackName, changeSetName);
-                }).join();
+                cfAsyncClient.createChangeSet(changeSetRequest).thenRunAsync(() ->
+                    WaitChangeSet(cfAsyncClient, stackName, changeSetName)).join();
 
                 changeSetToken = UUID.randomUUID().toString();
                 DescribeChangeSetRequest describeChangeSetRequest = DescribeChangeSetRequest.builder()
@@ -2166,6 +2166,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                                     .startsWith("The submitted information didn't contain changes.")) {
 
                         DeleteChangeSet(cfAsyncClient, describeStacksResult.stackName(), describeStacksResult.changeSetName());
+                        retry = false;
 
                     } else if (describeStacksResult.statusReason().contains("Rate exceeded")) {
 
@@ -2175,9 +2176,8 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
                         throw new MojoExecutionException("ChangeSet Error: " + describeStacksResult.statusReason());
                     }
-                }
 
-                retry = false;
+                } else retry = false;
 
             } catch (MojoExecutionException mojo) {
 
@@ -2233,6 +2233,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                     }
                 }
             }
+
         } while(retry);
 
         // Process any changes
@@ -2345,9 +2346,9 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
         ObjectMapper mapper = new ObjectMapper();
         StackParameter[] parameters_array = mapper.readValue(parametersString.getBytes(), StackParameter[].class);
-        Parameter[] parameters = Arrays.stream(parameters_array).collect(ArrayList<Parameter>::new, (array, p) -> {
-            array.add(Parameter.builder().parameterKey(p.parameterKey).parameterValue(p.parameterValue).usePreviousValue(p.usePreviousValue).build());
-        }, (a1, a2) -> {}).toArray(Parameter[]::new);
+        Parameter[] parameters = Arrays.stream(parameters_array).collect(ArrayList<Parameter>::new, (array, p) ->
+                array.add(Parameter.builder().parameterKey(p.parameterKey).parameterValue(p.parameterValue)
+                        .usePreviousValue(p.usePreviousValue).build()), (a1, a2) -> {}).toArray(Parameter[]::new);
 
         // Update the input parameters with values from the output parameters of previous stack runs.
         if (inputParameters != null) {
