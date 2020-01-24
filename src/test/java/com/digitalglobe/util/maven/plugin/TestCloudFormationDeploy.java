@@ -229,7 +229,8 @@ public class TestCloudFormationDeploy {
                 Output output = Output.builder().outputKey("HELLO").outputValue("World").build();
                 outputs.add(output);
 
-                Stack stack = Stack.builder().outputs(outputs).stackName("Test").build();
+                Stack stack = Stack.builder().outputs(outputs).stackName("Test")
+                        .stackStatus(StackStatus.CREATE_COMPLETE).build();
 
                 ArrayList<Stack> stacks = new ArrayList<>();
                 stacks.add(stack);

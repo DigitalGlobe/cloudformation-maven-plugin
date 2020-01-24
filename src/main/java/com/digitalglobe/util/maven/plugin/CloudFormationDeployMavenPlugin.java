@@ -34,7 +34,7 @@ import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.util.*;
 import java.util.concurrent.ExecutionException;
-import java.util.function.IntFunction;
+import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -1331,6 +1331,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
         boolean cloudFormationExists = isTemplatePreviouslyDeployed(cfAsyncClient, stackName);
 
         String auditString;
+        Predicate<StackInputParameter> sha = param -> param.parameterName.equals("CodeSHA256");
         if(readOnly) {
 
             auditString = (cloudFormationExists ? ("Reading the output from " + stackName + ".\n") :
@@ -1353,6 +1354,8 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                 // Read the stack parameters.
                 Parameter[] parameters = getInputParameters(stackParameterFilePath, credentials, inputParameters,
                         outputParameters);
+
+                if((inputParameters != null) && Arrays.stream(inputParameters).anyMatch(sha)) Thread.sleep(10000);
 
                 // Check to see if the stack has changes to process.
                 if (cloudFormationExists) {
@@ -1878,7 +1881,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
     private boolean isRetry(Exception ex) throws MojoExecutionException{
 
         // Check the exception message.
-        if (ex.getMessage().contains("Rate exceeded")) {
+        if ((ex.getMessage() != null) && ex.getMessage().contains("Rate exceeded")) {
 
             try {
 
@@ -2144,7 +2147,9 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
             try {
 
-                cfAsyncClient.createChangeSet(changeSetRequest).get();
+                cfAsyncClient.createChangeSet(changeSetRequest).thenRunAsync(() -> {
+                    WaitChangeSet(cfAsyncClient, stackName, changeSetName);
+                }).join();
 
                 changeSetToken = UUID.randomUUID().toString();
                 DescribeChangeSetRequest describeChangeSetRequest = DescribeChangeSetRequest.builder()
@@ -2154,7 +2159,29 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                         .build();
 
                 describeStacksResult = cfAsyncClient.describeChangeSet(describeChangeSetRequest).get();
+
+                if((describeStacksResult.status() == ChangeSetStatus.FAILED)) {
+                    if ((describeStacksResult.changes().size() <= 0) &&
+                            describeStacksResult.statusReason()
+                                    .startsWith("The submitted information didn't contain changes.")) {
+
+                        DeleteChangeSet(cfAsyncClient, describeStacksResult.stackName(), describeStacksResult.changeSetName());
+
+                    } else if (describeStacksResult.statusReason().contains("Rate exceeded")) {
+
+                        retry = true;
+
+                    } else {
+
+                        throw new MojoExecutionException("ChangeSet Error: " + describeStacksResult.statusReason());
+                    }
+                }
+
                 retry = false;
+
+            } catch (MojoExecutionException mojo) {
+
+                throw mojo;
 
             } catch (Exception ex) {
 
@@ -2180,17 +2207,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
                             } else {
 
-                               try {
-                                    DeleteChangeSetRequest deleteChangeSetRequest = DeleteChangeSetRequest.builder()
-                                            .changeSetName(changeSetName)
-                                            .stackName(stackName)
-                                            .build();
-
-                                    cfAsyncClient.deleteChangeSet(deleteChangeSetRequest).get();
-
-                                } catch (Exception dcsex) {
-                                    // Don't care if it isn't able to delete.
-                                }
+                                DeleteChangeSet(cfAsyncClient, stackName, changeSetName);
                             }
 
                             describeRetry = false;
@@ -2199,6 +2216,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
                             describeRetry = isRetry(dex);
                         }
+
                     } while (describeRetry);
 
                     retry = false;
@@ -2251,6 +2269,60 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
             audit.write("No changes to the Stack required.\n");
             System.out.println("No changes to the Stack required.");
         }
+    }
+
+    /**
+     * Waits for a change set to complete.
+     * @param cfAsyncClient
+     * @param stackName
+     * @param changeSetName
+     */
+    private void WaitChangeSet(CloudFormationAsyncClient cfAsyncClient, String stackName, String changeSetName) {
+
+        boolean retry;
+        Random random = new Random();
+        do {
+            String token = UUID.randomUUID().toString();
+            DescribeChangeSetRequest describeChangeSetRequest = DescribeChangeSetRequest.builder()
+                    .changeSetName(changeSetName)
+                    .stackName(stackName)
+                    .nextToken(token)
+                    .build();
+
+            try {
+
+                DescribeChangeSetResponse result = cfAsyncClient.describeChangeSet(describeChangeSetRequest).get();
+                retry = (result.status() == ChangeSetStatus.CREATE_PENDING) ||
+                        (result.status() == ChangeSetStatus.CREATE_IN_PROGRESS);
+
+                if(retry) Thread.sleep(random.nextInt(10000) + 1);
+
+            } catch (InterruptedException ie) { retry = true; }
+            catch (ExecutionException ex) { retry = ex.getMessage().contains("Rate exceeded"); }
+
+        } while (retry);
+    }
+
+    /**
+     * This routine deletes a specified change set.
+     *
+     * @param cfAsyncClient The CloudFormation client to use.
+     * @param stackName The name of the stack to delete the change set from.
+     * @param changeSetName The Name of the change set to delete.
+     */
+    private void DeleteChangeSet(CloudFormationAsyncClient cfAsyncClient, String stackName, String changeSetName) {
+
+        try {
+             DeleteChangeSetRequest deleteChangeSetRequest = DeleteChangeSetRequest.builder()
+                     .changeSetName(changeSetName)
+                     .stackName(stackName)
+                     .build();
+
+             cfAsyncClient.deleteChangeSet(deleteChangeSetRequest).get();
+
+         } catch (Exception dcsex) {
+             // Don't care if it isn't able to delete.
+         }
     }
 
     /**
@@ -2475,12 +2547,54 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
             try {
 
                 CreateStackResponse result = cfClient.createStack(request).get();
+                WaitStackCreate(stackName, cfClient);
+
+                DescribeStacksResponse describeResponse = cfClient.describeStacks(DescribeStacksRequest.builder()
+                        .stackName(stackName).build()).get();
+
+                if(describeResponse.stacks().get(0).stackStatus() != StackStatus.CREATE_COMPLETE)
+                    throw new MojoExecutionException(describeResponse.stacks().get(0).stackStatusReason());
+
                 audit.write("Created " + stackName + " with id: " + result.stackId() + ".\n");
                 retry = false;
 
             } catch (Exception ex) {
 
                 retry = isRetry(ex);
+            }
+
+        } while(retry);
+    }
+
+    /**
+     * Waits for a stack to complete.
+     *
+     * @param stackName The name of the stack being created
+     * @param cfClient The CloudFormation client to use.
+     * @throws InterruptedException Occurs when a process is interrupted.
+     * @throws ExecutionException Occurs when an error happens during the execution of the describe operation.
+     */
+    private void WaitStackCreate(String stackName, CloudFormationAsyncClient cfClient)
+            throws InterruptedException, ExecutionException {
+
+        boolean retry;
+        Random random = new Random();
+        do {
+
+            DescribeStacksResponse describeResponse = cfClient.describeStacks(DescribeStacksRequest.builder()
+                    .stackName(stackName).build()).get();
+
+            switch(describeResponse.stacks().get(0).stackStatus()) {
+
+                case CREATE_IN_PROGRESS:
+                case ROLLBACK_IN_PROGRESS:
+                    retry = true;
+                    Thread.sleep(random.nextInt(10000) + 1);
+                    break;
+
+                default:
+                    retry = false;
+                    break;
             }
 
         } while(retry);
