@@ -1,36 +1,29 @@
 package com.digitalglobe.util.maven.plugin;
 
-import com.amazonaws.auth.AWSCredentialsProvider;
-import com.amazonaws.auth.AWSSessionCredentials;
-import com.amazonaws.auth.AWSStaticCredentialsProvider;
-import com.amazonaws.auth.BasicSessionCredentials;
-import com.amazonaws.regions.DefaultAwsRegionProviderChain;
-import com.amazonaws.regions.Region;
-import com.amazonaws.regions.Regions;
-import com.amazonaws.services.cloudformation.AmazonCloudFormation;
-import com.amazonaws.services.cloudformation.AmazonCloudFormationClientBuilder;
-import com.amazonaws.services.cloudformation.model.*;
-import com.amazonaws.services.s3.AmazonS3;
-import com.amazonaws.services.s3.AmazonS3ClientBuilder;
-import com.amazonaws.services.s3.model.PutObjectRequest;
-import com.amazonaws.services.securitytoken.AWSSecurityTokenService;
-import com.amazonaws.services.securitytoken.AWSSecurityTokenServiceClientBuilder;
-import com.amazonaws.services.securitytoken.model.AssumeRoleRequest;
-import com.amazonaws.services.securitytoken.model.Credentials;
-import com.amazonaws.services.securitytoken.model.GetCallerIdentityRequest;
-import com.amazonaws.services.securitytoken.model.GetCallerIdentityResult;
-import com.amazonaws.services.simplesystemsmanagement.AWSSimpleSystemsManagement;
-import com.amazonaws.services.simplesystemsmanagement.AWSSimpleSystemsManagementClientBuilder;
-import com.amazonaws.services.simplesystemsmanagement.model.GetParameterRequest;
-import com.amazonaws.services.simplesystemsmanagement.model.GetParameterResult;
-import com.amazonaws.services.simplesystemsmanagement.model.ParameterNotFoundException;
-import com.amazonaws.services.simplesystemsmanagement.model.PutParameterRequest;
-import com.amazonaws.waiters.Waiter;
-import com.amazonaws.waiters.WaiterParameters;
+import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.AwsSessionCredentials;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.regions.providers.DefaultAwsRegionProviderChain;
+import software.amazon.awssdk.regions.Region;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.digitalglobe.utils.ClientBuilder;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
+import software.amazon.awssdk.services.cloudformation.CloudFormationAsyncClient;
+import software.amazon.awssdk.services.cloudformation.model.*;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.ssm.SsmClient;
+import software.amazon.awssdk.services.ssm.model.GetParameterRequest;
+import software.amazon.awssdk.services.ssm.model.GetParameterResponse;
+import software.amazon.awssdk.services.ssm.model.ParameterNotFoundException;
+import software.amazon.awssdk.services.ssm.model.PutParameterRequest;
+import software.amazon.awssdk.services.sts.StsClient;
+import software.amazon.awssdk.services.sts.model.AssumeRoleRequest;
+import software.amazon.awssdk.services.sts.model.Credentials;
+import software.amazon.awssdk.services.sts.model.GetCallerIdentityRequest;
+import software.amazon.awssdk.services.sts.model.GetCallerIdentityResponse;
 
 import java.io.*;
 import java.nio.file.*;
@@ -40,6 +33,8 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.util.*;
+import java.util.concurrent.ExecutionException;
+import java.util.function.IntFunction;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -54,10 +49,28 @@ import java.util.stream.Collectors;
 @SuppressWarnings({"JavaDoc", "MismatchedReadAndWriteOfArray", "CanBeFinal", "unused"})
 public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
-    static Class stsBuilder = AWSSecurityTokenServiceClientBuilder.class;
-    static Class s3Builder = AmazonS3ClientBuilder.class;
-    static Class cfBuilder = AmazonCloudFormationClientBuilder.class;
-    static private final Class ssmBuilder = AWSSimpleSystemsManagementClientBuilder.class;
+    static Class stsBuilder = StsClient.class;
+    static Class s3Builder = S3Client.class;
+    static Class cfAsyncBuilder = CloudFormationAsyncClient.class;
+    static private final Class ssmBuilder = SsmClient.class;
+
+    static public class StackParameter {
+        String parameterKey;
+        String parameterValue;
+        boolean usePreviousValue;
+
+        public void setParameterKey(String parameterKey) {
+            this.parameterKey = parameterKey;
+        }
+
+        public void setParameterValue(String parameterValue) {
+            this.parameterValue = parameterValue;
+        }
+
+        public void setUsePreviousValue(boolean usePreviousValue) {
+            this.usePreviousValue = usePreviousValue;
+        }
+    }
 
     /**
      * Stores a group of stacks to be processed in a sequential order.  Supports creating a lambda version stack
@@ -305,7 +318,6 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
          * @param description tells how the parameter is used.
          * @return this instance for initialization chaining.
          */
-        @SuppressWarnings("All")
         StackOutputParameterMapping withDescription(String description) {
 
             this.description =  description;
@@ -319,7 +331,6 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
          * @param mapParameterName is the name of the map parameter to map the output parameter to.
          * @return this instance for initialization chaining.
          */
-        @SuppressWarnings("All")
         StackOutputParameterMapping withMapParameterName(String mapParameterName) {
 
             this.mapParameterName = mapParameterName;
@@ -467,7 +478,6 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
          * @param description is the mapping description
          * @return this instance for initialization chaining.
          */
-        @SuppressWarnings("All")
         CliCommandOutputParameterMapping withDescription(String description) {
 
             this.description = description;
@@ -984,7 +994,6 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
      * @throws MojoExecutionException when the method can't process the request.
      * @throws ClassCastException when the parameter isn't a string.  This should not happen (bug if it does).
      */
-    @SuppressWarnings("ConstantConditions")
     public void execute() throws MojoExecutionException, ClassCastException {
 
         // Make sure the directory exists for the audit log file.
@@ -1039,7 +1048,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
             }
 
             // Get the credentials
-            AWSCredentialsProvider sessionCredentials = getAwsCredentialsProvider(roleArn);
+            AwsCredentialsProvider sessionCredentials = getAwsCredentialsProvider(roleArn);
 
             File[] jars = null;
             if(artifacts) {
@@ -1057,9 +1066,9 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
             for(int itemCount = 0; itemCount < stackParameterFileCount; itemCount++) {
 
                 // Renew S3 client
-                AmazonS3 s3Client = (sessionCredentials != null) ?
-                        new ClientBuilder<AmazonS3>().build(s3Builder, sessionCredentials) :
-                        new ClientBuilder<AmazonS3>().build(s3Builder);
+                S3Client s3Client = (sessionCredentials != null) ?
+                        new ClientBuilder<S3Client>().build(s3Builder, sessionCredentials) :
+                        new ClientBuilder<S3Client>().build(s3Builder);
 
                 Map<String,String> masterOutputParameters = new HashMap<>();
                 if(artifacts && (copyAction == ArtifactCopyAction.BEFORE)) {
@@ -1078,25 +1087,25 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                 String templateUrl = "https://s3.amazonaws.com/" + templateS3Bucket + "/" + templateName;
                 audit.write("Template URL: " + templateUrl + "\n");
 
-                PutObjectRequest templateRequest = new PutObjectRequest(templateS3Bucket, templateName, templateFile);
-                s3Client.putObject(templateRequest);
+                PutObjectRequest templateRequest = PutObjectRequest.builder().bucket(templateS3Bucket).key(templateName).build();
+                s3Client.putObject(templateRequest, RequestBody.fromFile(templateFile));
 
-                AmazonCloudFormation cfClient;
+                CloudFormationAsyncClient cfAsyncClient;
                 System.out.println("Region: " + (region == null ? "Empty" : region));
-                if(sessionCredentials != null) cfClient = (region == null) ?
-                        new ClientBuilder<AmazonCloudFormation>().build(cfBuilder, sessionCredentials) :
-                        new ClientBuilder<AmazonCloudFormation>().withRegion(region).build(cfBuilder, sessionCredentials);
+                if(sessionCredentials != null) cfAsyncClient = (region == null) ?
+                        new ClientBuilder<CloudFormationAsyncClient>().build(cfAsyncBuilder, sessionCredentials) :
+                        new ClientBuilder<CloudFormationAsyncClient>().withRegion(region).build(cfAsyncBuilder, sessionCredentials);
 
-                else cfClient = (region == null) ?
-                        new ClientBuilder<AmazonCloudFormation>().build(cfBuilder) :
-                        new ClientBuilder<AmazonCloudFormation>().withRegion(region).build(cfBuilder);
+                else cfAsyncClient = (region == null) ?
+                        new ClientBuilder<CloudFormationAsyncClient>().build(cfAsyncBuilder) :
+                        new ClientBuilder<CloudFormationAsyncClient>().withRegion(region).build(cfAsyncBuilder);
 
                 // Read in the cloud formation template.
                 audit.write("Stack Parameter Path: " + stackParameterFilePaths[itemCount] + "\n");
 
                 if(testRegionCondition(regionCondition)) {
 
-                    ExecuteTemplate(stackReadOnly, templateUrl, stackParameterFilePaths[itemCount], cfClient, s3Client,
+                    ExecuteTemplate(stackReadOnly, templateUrl, stackParameterFilePaths[itemCount], cfAsyncClient, s3Client,
                             stackName, null, null, sessionCredentials, inputParameters,
                             masterOutputParameters, outputParameterMappings, cliCommandOutputParameterMappings,
                             null, region);
@@ -1127,26 +1136,26 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                         // Renew S3 client
                         System.out.println("Stack Region: " + (stack.region == null ? "Empty" : stack.region));
                         s3Client = (sessionCredentials != null) ?
-                                new ClientBuilder<AmazonS3>().build(s3Builder, sessionCredentials) :
-                                new ClientBuilder<AmazonS3>().build(s3Builder);
+                                new ClientBuilder<S3Client>().build(s3Builder, sessionCredentials) :
+                                new ClientBuilder<S3Client>().build(s3Builder);
 
-                        AWSCredentialsProvider stackCredentials;
-                        AmazonCloudFormation tempCfClient = cfClient;
+                        AwsCredentialsProvider stackCredentials;
+                        CloudFormationAsyncClient tempCfAsyncClient = cfAsyncClient;
                         if(stack.roleArn != null) {
 
                             stackCredentials = getAwsCredentialsProvider(stack.roleArn);
 
-                            tempCfClient = stack.region == null ?
-                                    new ClientBuilder<AmazonCloudFormation>().build(cfBuilder, stackCredentials) :
-                                    new ClientBuilder<AmazonCloudFormation>().withRegion(stack.region).build(cfBuilder, stackCredentials);
+                            tempCfAsyncClient = stack.region == null ?
+                                    new ClientBuilder<CloudFormationAsyncClient>().build(cfAsyncBuilder, stackCredentials) :
+                                    new ClientBuilder<CloudFormationAsyncClient>().withRegion(stack.region).build(cfAsyncBuilder, stackCredentials);
 
                         } else {
 
                             stackCredentials = sessionCredentials;
                             if(stack.region != null) {
-                                tempCfClient = stackCredentials == null ?
-                                        new ClientBuilder<AmazonCloudFormation>().withRegion(stack.region).build(cfBuilder) :
-                                        new ClientBuilder<AmazonCloudFormation>().withRegion(stack.region).build(cfBuilder, stackCredentials);
+                                tempCfAsyncClient = stackCredentials == null ?
+                                        new ClientBuilder<CloudFormationAsyncClient>().withRegion(stack.region).build(cfAsyncBuilder) :
+                                        new ClientBuilder<CloudFormationAsyncClient>().withRegion(stack.region).build(cfAsyncBuilder, stackCredentials);
                             }
                         }
 
@@ -1160,14 +1169,14 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                                 ZonedDateTime.now().toEpochSecond() + "-" + secondaryStackName +
                                 "-" + templateFile.getName();
 
-                        templateRequest = new PutObjectRequest(templateS3Bucket, templateName, templateFile);
-                        s3Client.putObject(templateRequest);
+                        templateRequest = PutObjectRequest.builder().bucket(templateS3Bucket).key(templateName).build();
+                        s3Client.putObject(templateRequest, RequestBody.fromFile(templateFile));
                         templateUrl = "https://s3.amazonaws.com/" + templateS3Bucket + "/" + templateName;
 
                         if(testRegionCondition(stack.regionCondition)) {
 
                             ExecuteTemplate(stack.stackReadOnly, templateUrl, stack.stackParameterFilePath,
-                                    tempCfClient, s3Client, secondaryStackName, stack.condition,
+                                    tempCfAsyncClient, s3Client, secondaryStackName, stack.condition,
                                     stack.deploymentArtifactRegEx, stackCredentials, stack.inputParameters,
                                     outputParameters, stack.outputParameterMappings,
                                     stack.cliCommandOutputParameterMappings, stack.checkCondition, stack.region);
@@ -1217,7 +1226,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
      * @throws IOException when the method can't invoke the S3 client.
      * @throws NoSuchAlgorithmException when the method can't generate the hash code for the artifact.
      */
-    private void storeArtifact(AmazonS3 s3Client, File[] jars, String filter,
+    private void storeArtifact(S3Client s3Client, File[] jars, String filter,
                                Map<String, String> outputParameters)
             throws IOException, NoSuchAlgorithmException {
 
@@ -1227,7 +1236,8 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
         String artifactName = s3Prefix != null ? s3Prefix + "/" + jarFile.getName() : jarFile.getName();
 
-        s3Client.putObject(s3Bucket, artifactName, jarFile);
+        s3Client.putObject(PutObjectRequest.builder().bucket(s3Bucket).key(artifactName).build(),
+                RequestBody.fromFile(jarFile));
         audit.write(artifactName + " was copied to the s3 bucket (" + s3Bucket + ").\n");
 
         String sb = getBase64SHA256HashString(jarFile);
@@ -1245,9 +1255,9 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
      * @throws IOException when we can't write to the audit log.
      * @throws MojoExecutionException when an error occurs trying to assume a role.
      */
-    private AWSCredentialsProvider getAwsCredentialsProvider(String roleArn) throws IOException, MojoExecutionException {
+    private AwsCredentialsProvider getAwsCredentialsProvider(String roleArn) throws IOException, MojoExecutionException {
 
-        AWSCredentialsProvider sessionCredentials = null;
+        AwsCredentialsProvider sessionCredentials = null;
 
         if(roleArn == null) audit.write("roleArn: From default provider chain.\n");
         else {
@@ -1258,11 +1268,12 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
             try {
 
-                credentials = new ClientBuilder<AWSSecurityTokenService>().build(stsBuilder)
-                        .assumeRole(new AssumeRoleRequest()
-                                .withRoleArn(roleArn)
-                                .withRoleSessionName(UUID.randomUUID().toString()))
-                        .getCredentials();
+                credentials = new ClientBuilder<StsClient>().build(stsBuilder)
+                        .assumeRole(AssumeRoleRequest.builder()
+                                .roleArn(roleArn)
+                                .roleSessionName(UUID.randomUUID().toString())
+                                .build())
+                        .credentials();
 
             } catch(Exception ex) {
 
@@ -1272,10 +1283,10 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                 throw new MojoExecutionException( "Unable to assume role.", ex);
             }
 
-            sessionCredentials = new AWSStaticCredentialsProvider(new BasicSessionCredentials(
-                    credentials.getAccessKeyId(),
-                    credentials.getSecretAccessKey(),
-                    credentials.getSessionToken()));
+            sessionCredentials = StaticCredentialsProvider.create(AwsSessionCredentials.create(
+                    credentials.accessKeyId(),
+                    credentials.secretAccessKey(),
+                    credentials.sessionToken()));
 
             audit.write("Role assumed.\n");
         }
@@ -1289,7 +1300,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
      * @param readOnly is a flag to signal if the template is used to read the output parameters without update.
      * @param templateUrl contains the URL to the template to execute.
      * @param stackParameterFilePath is the file path to the parameter file to use with the template.
-     * @param cfClient is the cloud formation client used to execute the template.
+     * @param cfAsyncClient is the cloud formation client to use when performing the update or create stack.
      * @param s3client is a client to use when overriding the master stack artifact.
      * @param stackName is the name of the stack to create when executing the cloud formation template.
      * @param condition is the name of the condition for the template.
@@ -1307,8 +1318,9 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
      * @throws MojoExecutionException when the stack couldn't execute for a reason other then no changes.
      */
     private void ExecuteTemplate(Boolean readOnly, String templateUrl, String stackParameterFilePath,
-                                 AmazonCloudFormation cfClient, AmazonS3 s3client,  String stackName, String condition,
-                                 String deploymentArtifactRegEx, AWSCredentialsProvider credentials,
+                                 CloudFormationAsyncClient cfAsyncClient,
+                                 S3Client s3client, String stackName, String condition,
+                                 String deploymentArtifactRegEx, AwsCredentialsProvider credentials,
                                  StackInputParameter[] inputParameters, Map<String, String> outputParameters,
                                  StackOutputParameterMapping[] outputParameterMappings,
                                  CliCommandOutputParameterMapping[] cliCommandOutputParameterMappings,
@@ -1316,7 +1328,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
             throws IOException, InterruptedException, NoSuchAlgorithmException, MojoExecutionException {
 
         // Determine if the stack exists.
-        boolean cloudFormationExists = isTemplatePreviouslyDeployed(cfClient, stackName);
+        boolean cloudFormationExists = isTemplatePreviouslyDeployed(cfAsyncClient, stackName);
 
         String auditString;
         if(readOnly) {
@@ -1345,12 +1357,12 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                 // Check to see if the stack has changes to process.
                 if (cloudFormationExists) {
 
-                    DetectAndProcessStackChanges(templateUrl, cfClient, stackName, parameters);
+                    DetectAndProcessStackChanges(templateUrl, cfAsyncClient, stackName, parameters);
 
                 } else {
 
                     // Create or update the Stack.
-                    createStack(stackName, templateUrl, cfClient, parameters);
+                    createStack(stackName, templateUrl, cfAsyncClient, parameters);
 
                     audit.write("Stack Finished.\n");
                     System.out.println("Stack Finished.");
@@ -1360,17 +1372,17 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
             System.out.println();
 
             // Add output parameters from the stack run and optionally save them to the Parameter Store.
-            AWSSimpleSystemsManagement ssmClient;
+            SsmClient ssmClient;
             if(region != null) ssmClient = (credentials != null) ?
-                    new ClientBuilder<AWSSimpleSystemsManagement>().withRegion(region).build(ssmBuilder, credentials) :
-                    new ClientBuilder<AWSSimpleSystemsManagement>().withRegion(region).build((ssmBuilder));
+                    new ClientBuilder<SsmClient>().withRegion(region).build(ssmBuilder, credentials) :
+                    new ClientBuilder<SsmClient>().withRegion(region).build((ssmBuilder));
 
             else ssmClient = (credentials != null) ?
-                    new ClientBuilder<AWSSimpleSystemsManagement>().build(ssmBuilder, credentials) :
-                    new ClientBuilder<AWSSimpleSystemsManagement>().build(ssmBuilder);
+                    new ClientBuilder<SsmClient>().build(ssmBuilder, credentials) :
+                    new ClientBuilder<SsmClient>().build(ssmBuilder);
 
 
-            processOutputParameters(cfClient, stackName, credentials, ssmClient, outputParameters,
+            processOutputParameters(cfAsyncClient, stackName, credentials, ssmClient, outputParameters,
                     outputParameterMappings, region);
 
             processCommandOutputParameters(credentials, ssmClient, outputParameters,
@@ -1395,7 +1407,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
      * @throws MojoExecutionException is thrown if the regular expression is bad.
      * @throws NoSuchAlgorithmException is thrown if the SHA-256 algorithm doesn't exist for calculating a file hash.
      */
-    private void storeDeploymentArtifact(AmazonS3 s3client, String deploymentArtifactRegEx,
+    private void storeDeploymentArtifact(S3Client s3client, String deploymentArtifactRegEx,
                                          Map<String, String> outputParameters)
             throws IOException, MojoExecutionException, NoSuchAlgorithmException {
 
@@ -1466,8 +1478,8 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
     /**
      * This function test to see if the current region conditon is statisfied.  If the current region mapping is null
      * then it is assumed that there are no region restrictions and the mapping is allowed.  If the region is specified
-     * and it matches the current region (which is picked up from the credential chain); then it is statisfied ant
-     * the mapping is allowed to continue.  Otherwise, the condition is not statisfied and the mapping is not allowed
+     * and it matches the current region (which is picked up from the credential chain); then it is satisfied ant
+     * the mapping is allowed to continue.  Otherwise, the condition is not satisfied and the mapping is not allowed
      * to continue.
      *
      * @param validRegion is the value of the region where the mapping is allowed.  It may be null.
@@ -1480,13 +1492,13 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
         if(validRegion != null) {
 
-            Region region = Region.getRegion(Regions.fromName(validRegion));
+            Region region = Region.of(validRegion);
             if(region == null) throw new MojoExecutionException("Invalided region specified");
 
             DefaultAwsRegionProviderChain chain = new DefaultAwsRegionProviderChain();
-            String chainRegion = chain.getRegion();
-            Region currentRegion = Region.getRegion(Regions.fromName(chainRegion));
-            if(currentRegion == null) currentRegion = Region.getRegion(Regions.DEFAULT_REGION);
+
+            Region currentRegion =  chain.getRegion();
+            if(currentRegion == null) currentRegion = Region.US_EAST_1;
 
             result = region == currentRegion;
         }
@@ -1503,15 +1515,14 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
      * @param ssmClient is the client to use for the parameter store.
      * @param region is the region to store parameters in.
      * @throws IOException when an exception occurs while reading/writing to process or file system.
-     * @throws InterruptedException when the operating system interrupts the process execution.
      * @throws ClassCastException when the parameter isn't a string.  This should never happen (bug if it does).
      * @throws MojoExecutionException when it can't find a parameter.
      */
-    private void processCommandOutputParameters(AWSCredentialsProvider credentials,
-                                                AWSSimpleSystemsManagement ssmClient,
+    private void processCommandOutputParameters(AwsCredentialsProvider credentials,
+                                                SsmClient ssmClient,
                                                 Map<String, String> outputParameters,
                                                 CliCommandOutputParameterMapping[] parameterMappings, String region)
-            throws IOException, InterruptedException, MojoExecutionException, ClassCastException {
+            throws IOException, MojoExecutionException, ClassCastException {
 
         if(parameterMappings != null) {
 
@@ -1715,69 +1726,67 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
      * @throws IOException when the process has trouble calling AWS commands.
      * @throws MojoExecutionException when a process error occurs in the method.
      */
-    private void getCredentialMap(AWSCredentialsProvider credentials, String roleArn,
+    private void getCredentialMap(AwsCredentialsProvider credentials, String roleArn,
                                   HashMap<String, String> environmentMap)
             throws IOException, MojoExecutionException {
 
         // If the default credentials are not null
         if(credentials != null) {
 
-            AWSSessionCredentials sessionCredentials;
+            AwsSessionCredentials sessionCredentials;
 
-            sessionCredentials = (AWSSessionCredentials) credentials.getCredentials();
+            sessionCredentials = (AwsSessionCredentials) credentials.resolveCredentials();
 
             if (roleArn != null) {
 
-                AWSCredentialsProvider session = getAwsCredentialsProvider(roleArn);
-                sessionCredentials = (AWSSessionCredentials) session.getCredentials();
+                AwsCredentialsProvider session = getAwsCredentialsProvider(roleArn);
+                sessionCredentials = (AwsSessionCredentials) session.resolveCredentials();
                 audit.write("Using role: " + roleArn + "\n");
 
             } else audit.write("Using role from stack credentials.\n");
 
-            environmentMap.put("AWS_ACCESS_KEY_ID", sessionCredentials.getAWSAccessKeyId());
-            environmentMap.put("AWS_SECRET_ACCESS_KEY", sessionCredentials.getAWSSecretKey());
-            environmentMap.put("AWS_SESSION_TOKEN", sessionCredentials.getSessionToken());
+            environmentMap.put("AWS_ACCESS_KEY_ID", sessionCredentials.accessKeyId());
+            environmentMap.put("AWS_SECRET_ACCESS_KEY", sessionCredentials.secretAccessKey());
+            environmentMap.put("AWS_SESSION_TOKEN", sessionCredentials.sessionToken());
 
         } else {
 
-            AWSSessionCredentials sessionCredentials;
+            AwsSessionCredentials sessionCredentials;
             if (roleArn != null) {
 
-                AWSCredentialsProvider session = getAwsCredentialsProvider(roleArn);
-                sessionCredentials = (AWSSessionCredentials) session.getCredentials();
-                environmentMap.put("AWS_ACCESS_KEY_ID", sessionCredentials.getAWSAccessKeyId());
-                environmentMap.put("AWS_SECRET_ACCESS_KEY", sessionCredentials.getAWSSecretKey());
-                environmentMap.put("AWS_SESSION_TOKEN", sessionCredentials.getSessionToken());
+                AwsCredentialsProvider session = getAwsCredentialsProvider(roleArn);
+                sessionCredentials = (AwsSessionCredentials) session.resolveCredentials();
+                environmentMap.put("AWS_ACCESS_KEY_ID", sessionCredentials.accessKeyId());
+                environmentMap.put("AWS_SECRET_ACCESS_KEY", sessionCredentials.secretAccessKey());
+                environmentMap.put("AWS_SESSION_TOKEN", sessionCredentials.sessionToken());
                 audit.write("Using role: " + roleArn + "\n");
 
             } else {
 
-                AWSSecurityTokenService stsClient =
-                        new ClientBuilder<AWSSecurityTokenService>().build(stsBuilder);
+                StsClient stsClient = new ClientBuilder<StsClient>().build(stsBuilder);
 
-                GetCallerIdentityRequest request = new GetCallerIdentityRequest();
-                GetCallerIdentityResult result = stsClient.getCallerIdentity(request);
-                AWSCredentialsProvider session = getAwsCredentialsProvider(result.getArn());
+                GetCallerIdentityRequest request = GetCallerIdentityRequest.builder().build();
+                GetCallerIdentityResponse result = stsClient.getCallerIdentity(request);
+                AwsCredentialsProvider session = getAwsCredentialsProvider(result.arn());
 
-                environmentMap.put("AWS_ACCESS_KEY_ID", session.getCredentials().getAWSAccessKeyId());
-                environmentMap.put("AWS_SECRET_ACCESS_KEY", session.getCredentials().getAWSSecretKey());
+                environmentMap.put("AWS_ACCESS_KEY_ID", session.resolveCredentials().accessKeyId());
+                environmentMap.put("AWS_SECRET_ACCESS_KEY", session.resolveCredentials().secretAccessKey());
 
-                if(session.getCredentials().getClass().isAssignableFrom(AWSSessionCredentials.class)) {
+                if(session.resolveCredentials().getClass().isAssignableFrom(AwsSessionCredentials.class)) {
 
-                    sessionCredentials = (AWSSessionCredentials)session.getCredentials();
-                    environmentMap.put("AWS_SESSION_TOKEN", sessionCredentials.getSessionToken());
+                    sessionCredentials = (AwsSessionCredentials)session.resolveCredentials();
+                    environmentMap.put("AWS_SESSION_TOKEN", sessionCredentials.sessionToken());
                 }
-                audit.write("Using role: " + result.getArn() + "\n");
+                audit.write("Using role: " + result.arn() + "\n");
             }
         }
 
         DefaultAwsRegionProviderChain chain = new DefaultAwsRegionProviderChain();
-        String chainRegion = chain.getRegion();
-        Region region = Region.getRegion(Regions.fromName(chainRegion));
-        if(region == null) region = Region.getRegion(Regions.DEFAULT_REGION);
+        Region region = chain.getRegion();
+        if(region == null) region = Region.US_EAST_1;
 
-        environmentMap.put("AWS_DEFAULT_REGION", region.getName());
-        audit.write("Using region: " + region.getName() + "\n");
+        environmentMap.put("AWS_DEFAULT_REGION", region.toString());
+        audit.write("Using region: " + region.toString() + "\n");
     }
 
     /**
@@ -1796,21 +1805,20 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
      * @throws IOException when the routine is unable to assume a role.
      * @throws MojoExecutionException when a logic or validation error occurs with assuming a role.
      */
-    private void processOutputParameters(AmazonCloudFormation cfClient, String stackName,
-                                         AWSCredentialsProvider credentials, AWSSimpleSystemsManagement ssmClient,
+    private void processOutputParameters(CloudFormationAsyncClient cfClient, String stackName,
+                                         AwsCredentialsProvider credentials, SsmClient ssmClient,
                                          Map<String, String> outputParameters,
                                          StackOutputParameterMapping[] outputParameterMappings, String region)
             throws IOException, MojoExecutionException {
 
         boolean retry;
-        DescribeStacksResult masterResult = null;
+        DescribeStacksResponse masterResult = null;
 
         do {
 
             try {
 
-                masterResult = cfClient.describeStacks(new DescribeStacksRequest()
-                        .withStackName(stackName));
+                masterResult = cfClient.describeStacks(DescribeStacksRequest.builder().stackName(stackName).build()).get();
 
                 retry = false;
 
@@ -1821,39 +1829,40 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
         } while(retry);
 
-        if(masterResult.getStacks().get(0).getOutputs().size() > 0)
-            System.out.println("Output Parameters for " + masterResult.getStacks().get(0).getStackName() + ":");
+        if((masterResult != null) && (masterResult.stacks().get(0).outputs().size() > 0)) {
+            System.out.println("Output Parameters for " + masterResult.stacks().get(0).stackName() + ":");
 
-        // For each output parameter, map it and save it.
-        for (Output masterOutput : masterResult.getStacks().get(0).getOutputs()) {
+            // For each output parameter, map it and save it.
+            for (Output masterOutput : masterResult.stacks().get(0).outputs()) {
 
-            Boolean mapped = false;
+                Boolean mapped = false;
 
-            if(outputParameterMappings != null) {
+                if (outputParameterMappings != null) {
 
-                // Map the parameter with all matching rules.  The same parameter may be mapped multiple times.
-                for(StackOutputParameterMapping mapping : outputParameterMappings) {
+                    // Map the parameter with all matching rules.  The same parameter may be mapped multiple times.
+                    for (StackOutputParameterMapping mapping : outputParameterMappings) {
 
-                    if(masterOutput.getOutputKey().equals(mapping.parameterName)) {
+                        if (masterOutput.outputKey().equals(mapping.parameterName)) {
 
-                        mapped = ProcessMapping(outputParameters, ssmClient, masterOutput.getOutputKey(),
-                                masterOutput.getOutputValue(), mapping, region);
+                            mapped = ProcessMapping(outputParameters, ssmClient, masterOutput.outputKey(),
+                                    masterOutput.outputValue(), mapping, region);
+                        }
                     }
+                }
+
+                // Default action to save parameters without any mappings or parameters with mapping restrictions.
+                if (!mapped) {
+
+                    outputParameters.put(masterOutput.outputKey(), masterOutput.outputValue().trim());
+
+                    System.out.println("DEBUG: Output Parameter: " + masterOutput.outputKey());
+                    System.out.println("  With value: " + masterOutput.outputValue());
+                    System.out.println();
                 }
             }
 
-            // Default action to save parameters without any mappings or parameters with mapping restrictions.
-            if(!mapped) {
-
-                outputParameters.put(masterOutput.getOutputKey(), masterOutput.getOutputValue().trim());
-
-                System.out.println("DEBUG: Output Parameter: " + masterOutput.getOutputKey());
-                System.out.println("  With value: " + masterOutput.getOutputValue());
-                System.out.println();
-            }
+            System.out.println();
         }
-
-        if(masterResult.getStacks().get(0).getOutputs().size() > 0) System.out.println();
     }
 
     /**
@@ -1905,7 +1914,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
      * @throws MojoExecutionException when a processing error occurs in the method.
      * @throws IOException when the method is unable to read/write to the parameter store.
      */
-    private Boolean ProcessMapping(Map<String, String> outputParameters, AWSSimpleSystemsManagement ssmClient,
+    private Boolean ProcessMapping(Map<String, String> outputParameters, SsmClient ssmClient,
                                    String parameterName, String parameterValue, StackOutputParameterMapping mapping, String region)
             throws MojoExecutionException, IOException {
 
@@ -1928,27 +1937,28 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
             // Store the parameter in System Manager Parameter Store if a field is specified.
             if(mapping.parameterStoreFieldName != null) {
 
-                AWSSimpleSystemsManagement client = ssmClient;
+                SsmClient client = ssmClient;
                 if(mapping.roleArn != null) {
 
-                    AWSCredentialsProvider session = getAwsCredentialsProvider(mapping.roleArn);
+                    AwsCredentialsProvider session = getAwsCredentialsProvider(mapping.roleArn);
 
                     client = region != null ?
-                            new ClientBuilder<AWSSimpleSystemsManagement>().withRegion(region).build(ssmBuilder, session) :
-                            new ClientBuilder<AWSSimpleSystemsManagement>().build(ssmBuilder, session);
+                            new ClientBuilder<SsmClient>().withRegion(region).build(ssmBuilder, session) :
+                            new ClientBuilder<SsmClient>().build(ssmBuilder, session);
                 }
 
                 boolean update = false;
                 try {
 
                     System.out.println("DEBUG: Getting Parameter: " + mapping.parameterStoreFieldName);
-                    GetParameterRequest getParameterRequest = new GetParameterRequest()
-                            .withName(mapping.parameterStoreFieldName).withWithDecryption(true);
+                    GetParameterRequest getParameterRequest = GetParameterRequest.builder()
+                            .name(mapping.parameterStoreFieldName)
+                            .withDecryption(true)
+                            .build();
 
+                    GetParameterResponse result = client.getParameter(getParameterRequest);
 
-                    GetParameterResult result = client.getParameter(getParameterRequest);
-
-                    if(!result.getParameter().getValue().trim()
+                    if(!result.parameter().value().trim()
                             .equals(parameterValue.trim())) {
 
                         update = true;
@@ -1972,12 +1982,13 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                     if(mapping.mapParameterName != null) System.out.println("And: " + mapping.mapParameterName);
                     System.out.println();
 
-                    PutParameterRequest parameterRequest = new PutParameterRequest()
-                            .withName(mapping.parameterStoreFieldName)
-                            .withOverwrite(true)
-                            .withDescription(mapping.description)
-                            .withType(mapping.parameterStoreFieldType.toString())
-                            .withValue(parameterValue);
+                    PutParameterRequest parameterRequest = PutParameterRequest.builder()
+                            .name(mapping.parameterStoreFieldName)
+                            .overwrite(true)
+                            .description(mapping.description)
+                            .type(mapping.parameterStoreFieldType.toString())
+                            .value(parameterValue)
+                            .build();
 
                     client.putParameter(parameterRequest);
 
@@ -2019,7 +2030,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
      * @param stackName is the name of the stack to investigate.
      * @return a flag indicating if the template was previously deployed.
      */
-    private boolean isTemplatePreviouslyDeployed(AmazonCloudFormation cfClient, String stackName) {
+    private boolean isTemplatePreviouslyDeployed(CloudFormationAsyncClient cfClient, String stackName) throws InterruptedException {
         boolean cloudFormationExists = true;
         boolean retry;
 
@@ -2027,14 +2038,13 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
             try {
 
-                cfClient.describeStacks(new DescribeStacksRequest()
-                        .withStackName(stackName));
+                cfClient.describeStacks(DescribeStacksRequest.builder().stackName(stackName).build()).get();
 
                 retry = false;
 
-            } catch (AmazonCloudFormationException acfEx) {
+            } catch (ExecutionException acfEx) {
 
-                if (acfEx.getMessage().contains("Rate exceeded")) {
+                if (acfEx.getCause().getMessage().contains("Rate exceeded")) {
 
                     retry = true;
                     try { Thread.sleep(1000); } catch (InterruptedException iex) {  /* Ignore */ }
@@ -2091,57 +2101,64 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
      * user and audit of the the fact that there are no changes to be made.
      *
      * @param templateUrl is the URL to the template to deploy.
-     * @param cfClient is the CloudFormation Client to use when inquiring about stacks and deploying changes.
+     * @param cfAsyncClient is the CloudFormation Client to use when inquiring about stacks and deploying changes.
      * @param stackName is the name of the stack to update.
      * @param parameters are the parameters to update the stack with.
      * @throws MojoExecutionException when a validation or logic error occurs.
      * @throws IOException when an error occurs trying to connect to the AWS API.
      */
-    private void DetectAndProcessStackChanges(String templateUrl, AmazonCloudFormation cfClient, String stackName,
+    private void DetectAndProcessStackChanges(String templateUrl, CloudFormationAsyncClient cfAsyncClient, String stackName,
                                               Parameter[] parameters) throws MojoExecutionException, IOException {
 
-        Waiter<DescribeChangeSetRequest> waiter;
         boolean retry;
 
         String changeSetName = "N-" + UUID.randomUUID().toString();
         String changeSetToken = UUID.randomUUID().toString();
-        CreateChangeSetRequest changeSetRequest = new CreateChangeSetRequest()
-                .withParameters(parameters)
-                .withStackName(stackName)
-                .withChangeSetType("UPDATE")
-                .withTemplateURL(templateUrl)
-                .withChangeSetName(changeSetName)
-                .withUsePreviousTemplate(false)
-                .withClientToken(changeSetToken);
+        CreateChangeSetRequest changeSetRequest;
+        if(requiresIAM) {
+            changeSetRequest = CreateChangeSetRequest.builder()
+                    .parameters(parameters)
+                    .stackName(stackName)
+                    .changeSetType("UPDATE")
+                    .templateURL(templateUrl)
+                    .changeSetName(changeSetName)
+                    .usePreviousTemplate(false)
+                    .clientToken(changeSetToken)
+                    .capabilities(Capability.CAPABILITY_NAMED_IAM)
+                    .build();
+        } else {
+            changeSetRequest = CreateChangeSetRequest.builder()
+                    .parameters(parameters)
+                    .stackName(stackName)
+                    .changeSetType("UPDATE")
+                    .templateURL(templateUrl)
+                    .changeSetName(changeSetName)
+                    .usePreviousTemplate(false)
+                    .clientToken(changeSetToken)
+                    .build();
+        }
 
-        if (requiresIAM) changeSetRequest.withCapabilities(Capability.CAPABILITY_NAMED_IAM);
-
-        DescribeChangeSetResult describeStacksResult = null;
+        DescribeChangeSetResponse describeStacksResult = null;
 
         do {
 
             try {
 
-                CreateChangeSetResult changeSetResult = cfClient.createChangeSet(changeSetRequest);
-                waiter = cfClient.waiters().changeSetCreateComplete();
-                waiter.run(new WaiterParameters<>(new DescribeChangeSetRequest()
-                        .withStackName(stackName)
-                        .withChangeSetName(changeSetName)
-                        .withNextToken(UUID.randomUUID().toString())));
+                cfAsyncClient.createChangeSet(changeSetRequest).get();
 
                 changeSetToken = UUID.randomUUID().toString();
-                DescribeChangeSetRequest describeChangeSetRequest = new DescribeChangeSetRequest()
-                        .withChangeSetName(changeSetName)
-                        .withStackName(stackName)
-                        .withNextToken(changeSetToken);
+                DescribeChangeSetRequest describeChangeSetRequest = DescribeChangeSetRequest.builder()
+                        .changeSetName(changeSetName)
+                        .stackName(stackName)
+                        .nextToken(changeSetToken)
+                        .build();
 
-                describeStacksResult = cfClient.describeChangeSet(describeChangeSetRequest);
-
+                describeStacksResult = cfAsyncClient.describeChangeSet(describeChangeSetRequest).get();
                 retry = false;
 
             } catch (Exception ex) {
 
-                if (ex.getMessage().equals("Resource never entered the desired state as it failed.")) {
+                if (ex.getCause().getMessage().equals("Resource never entered the desired state as it failed.")) {
 
                     boolean describeRetry;
                     do {
@@ -2149,38 +2166,40 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                         try {
 
                             changeSetToken = UUID.randomUUID().toString();
-                            DescribeChangeSetRequest describeChangeSetRequest = new DescribeChangeSetRequest()
-                                    .withChangeSetName(changeSetName)
-                                    .withStackName(stackName)
-                                    .withNextToken(changeSetToken);
+                            DescribeChangeSetRequest describeChangeSetRequest = DescribeChangeSetRequest.builder()
+                                    .changeSetName(changeSetName)
+                                    .stackName(stackName)
+                                    .nextToken(changeSetToken)
+                                    .build();
 
-                            describeStacksResult = cfClient.describeChangeSet(describeChangeSetRequest);
-                            if (!describeStacksResult.getStatusReason()
-                                    .startsWith("The submitted information didn't contain changes.")) {
+                            describeStacksResult = cfAsyncClient.describeChangeSet(describeChangeSetRequest).get();
 
-                                throw new MojoExecutionException("ChangeSet Error: " + describeStacksResult.getStatusReason());
+                            if (!describeStacksResult.statusReason().startsWith("The submitted information didn't contain changes.")) {
+
+                                throw new MojoExecutionException("ChangeSet Error: " + describeStacksResult.statusReason());
 
                             } else {
 
-                                try {
-                                    DeleteChangeSetRequest deleteChangeSetRequest = new DeleteChangeSetRequest()
-                                            .withChangeSetName(changeSetName)
-                                            .withStackName(stackName);
+                               try {
+                                    DeleteChangeSetRequest deleteChangeSetRequest = DeleteChangeSetRequest.builder()
+                                            .changeSetName(changeSetName)
+                                            .stackName(stackName)
+                                            .build();
 
-                                    cfClient.deleteChangeSet(deleteChangeSetRequest);
-                                }
-                                catch (Exception dcsex) {
+                                    cfAsyncClient.deleteChangeSet(deleteChangeSetRequest).get();
+
+                                } catch (Exception dcsex) {
                                     // Don't care if it isn't able to delete.
                                 }
                             }
 
                             describeRetry = false;
 
-                        } catch(Exception dex) {
+                        } catch (Exception dex) {
 
                             describeRetry = isRetry(dex);
                         }
-                    } while(describeRetry);
+                    } while (describeRetry);
 
                     retry = false;
 
@@ -2190,32 +2209,27 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
                         retry = isRetry(ex);
 
-                    } catch(Exception rex) {
+                    } catch (Exception rex) {
 
                         throw new MojoExecutionException("ChangeSet Error: " + ex.getMessage());
                     }
                 }
             }
-
         } while(retry);
 
         // Process any changes
-        if (describeStacksResult.getChanges().size() > 0) {
+        if ((describeStacksResult != null) && (describeStacksResult.changes().size() > 0)) {
 
             do {
 
                 try {
+                    ExecuteChangeSetRequest executeChangeSetRequest = ExecuteChangeSetRequest.builder()
+                            .changeSetName(changeSetName)
+                            .stackName(stackName)
+                            .clientRequestToken(changeSetToken)
+                            .build();
 
-                    Waiter<DescribeStacksRequest> waiterStack;
-
-                    ExecuteChangeSetRequest executeChangeSetRequest = new ExecuteChangeSetRequest()
-                            .withChangeSetName(changeSetName)
-                            .withStackName(stackName)
-                            .withClientRequestToken(changeSetToken);
-
-                    cfClient.executeChangeSet(executeChangeSetRequest);
-                    waiterStack = cfClient.waiters().stackUpdateComplete();
-                    waiterStack.run(new WaiterParameters<>(new DescribeStacksRequest().withStackName(stackName)));
+                    cfAsyncClient.executeChangeSet(executeChangeSetRequest).get();
 
                     retry = false;
 
@@ -2227,7 +2241,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
             } while(retry);
 
             audit.write("Updated " + stackName + " with id: " +
-                    describeStacksResult.getStackId() + ".\n");
+                    describeStacksResult.stackId() + ".\n");
 
             audit.write("Stack Finished.\n");
             System.out.println("Stack Finished.");
@@ -2251,29 +2265,37 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
      * @throws IOException when having problems reading the parameters from the input parameters file.
      * @throws MojoExecutionException when validation or logic errors occur.
      */
-    private Parameter[] getInputParameters(String stackParameterFilePath, AWSCredentialsProvider credentials,
+    private Parameter[] getInputParameters(String stackParameterFilePath, AwsCredentialsProvider credentials,
                                            StackInputParameter[] inputParameters, Map<String, String> outputParameters)
             throws IOException, MojoExecutionException {
 
         String parametersString = new String(Files.readAllBytes(Paths.get(stackParameterFilePath)));
 
         ObjectMapper mapper = new ObjectMapper();
-        Parameter[] parameters = mapper.readValue(parametersString.getBytes(), Parameter[].class);
+        StackParameter[] parameters_array = mapper.readValue(parametersString.getBytes(), StackParameter[].class);
+        Parameter[] parameters = Arrays.stream(parameters_array).collect(ArrayList<Parameter>::new, (array, p) -> {
+            array.add(Parameter.builder().parameterKey(p.parameterKey).parameterValue(p.parameterValue).usePreviousValue(p.usePreviousValue).build());
+        }, (a1, a2) -> {}).toArray(Parameter[]::new);
 
         // Update the input parameters with values from the output parameters of previous stack runs.
         if (inputParameters != null) {
 
-            AWSSimpleSystemsManagement client = (credentials != null) ?
-                    new ClientBuilder<AWSSimpleSystemsManagement>().build(ssmBuilder, credentials) :
-                    new ClientBuilder<AWSSimpleSystemsManagement>().build(ssmBuilder);
+            SsmClient client = (credentials != null) ?
+                    new ClientBuilder<SsmClient>().build(ssmBuilder, credentials) :
+                    new ClientBuilder<SsmClient>().build(ssmBuilder);
 
             for (StackInputParameter paramItem : inputParameters) {
 
-                for (Parameter parameter : parameters) {
+                for (int i = 0; i < parameters.length; i++) {
 
-                    if (parameter.getParameterKey().equals(paramItem.parameterName)) {
+                    Parameter parameter = parameters[i];
+                    if (parameter.parameterKey().equals(paramItem.parameterName)) {
 
-                        parameter.setParameterValue(getInputParameterValue(outputParameters, client, paramItem));
+                        parameters[i] = Parameter.builder()
+                                .parameterKey(parameter.parameterKey())
+                                .parameterValue(getInputParameterValue(outputParameters, client, paramItem))
+                                .usePreviousValue(parameter.usePreviousValue())
+                                .build();
                         break;
                     }
                 }
@@ -2295,7 +2317,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
      * @return the string representation of the parameter value.
      * @throws MojoExecutionException when an method error occurs.
      */
-    private String getInputParameterValue(Map<String, String> outputParameters, AWSSimpleSystemsManagement client,
+    private String getInputParameterValue(Map<String, String> outputParameters, SsmClient client,
                                            StackInputParameter paramItem)
             throws MojoExecutionException {
 
@@ -2331,12 +2353,10 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
             try {
 
-                GetParameterRequest request = new GetParameterRequest()
-                        .withName(paramItem.parameterStoreFieldName)
-                        .withWithDecryption(true);
+                GetParameterRequest request = GetParameterRequest.builder().name(paramItem.parameterStoreFieldName).withDecryption(true).build();
 
-                GetParameterResult result = client.getParameter(request);
-                parameterValue = result.getParameter().getValue();
+                GetParameterResponse result = client.getParameter(request);
+                parameterValue = result.parameter().value();
 
             } catch (ParameterNotFoundException ex) {
 
@@ -2426,31 +2446,36 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
      * @param parameters is a list of parameters to update the stack with.
      * @throws MojoExecutionException when a retry exception isn't a Rate Exceeded exception.
      */
-    private void createStack(String stackName, String templateUrl, AmazonCloudFormation cfClient,
+    private void createStack(String stackName, String templateUrl, CloudFormationAsyncClient cfClient,
                              Parameter[] parameters) throws MojoExecutionException {
 
-        Waiter<DescribeStacksRequest> waiter;
         boolean retry;
 
         // Create the stack.
-        CreateStackRequest request = new CreateStackRequest()
-                .withStackName(stackName)
-                .withTemplateURL(templateUrl)
-                .withParameters(parameters);
+        CreateStackRequest request;
+        if(requiresIAM) {
 
-        if (requiresIAM) request.withCapabilities(Capability.CAPABILITY_NAMED_IAM);
+            request = CreateStackRequest.builder()
+                    .stackName(stackName)
+                    .templateURL(templateUrl)
+                    .parameters(parameters)
+                    .capabilities(Capability.CAPABILITY_NAMED_IAM)
+                    .build();
+        } else {
+
+            request = CreateStackRequest.builder()
+                    .stackName(stackName)
+                    .templateURL(templateUrl)
+                    .parameters(parameters)
+                    .build();
+        }
 
         do {
 
             try {
 
-                CreateStackResult result = cfClient.createStack(request);
-                waiter = cfClient.waiters().stackCreateComplete();
-
-                audit.write("Created " + stackName + " with id: " + result.getStackId() + ".\n");
-
-                waiter.run(new WaiterParameters<>(new DescribeStacksRequest().withStackName(stackName)));
-
+                CreateStackResponse result = cfClient.createStack(request).get();
+                audit.write("Created " + stackName + " with id: " + result.stackId() + ".\n");
                 retry = false;
 
             } catch (Exception ex) {

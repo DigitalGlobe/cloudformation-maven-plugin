@@ -2,53 +2,33 @@ package com.digitalglobe.util.maven.plugin;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.InputStream;
 import java.lang.reflect.Field;
-import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Date;
 import java.util.HashMap;
-import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.Future;
+import java.util.concurrent.CompletableFuture;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import com.amazonaws.services.cloudformation.model.*;
-import com.amazonaws.services.securitytoken.model.*;
+import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.AwsSessionCredentials;
+import software.amazon.awssdk.core.exception.SdkClientException;
+import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.services.cloudformation.CloudFormationAsyncClient;
+import software.amazon.awssdk.services.cloudformation.model.*;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.sts.StsClient;
+import software.amazon.awssdk.services.sts.model.*;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.testng.Assert;
 import org.testng.annotations.Test;
 
-import com.amazonaws.AmazonServiceException;
-import com.amazonaws.AmazonWebServiceRequest;
-import com.amazonaws.HttpMethod;
-import com.amazonaws.ResponseMetadata;
-import com.amazonaws.SdkClientException;
-import com.amazonaws.auth.AWSCredentialsProvider;
-import com.amazonaws.auth.BasicSessionCredentials;
-import com.amazonaws.regions.Region;
-import com.amazonaws.services.cloudformation.AmazonCloudFormation;
-import com.amazonaws.services.cloudformation.waiters.AmazonCloudFormationWaiters;
-import com.amazonaws.services.s3.AmazonS3;
-import com.amazonaws.services.s3.S3ClientOptions;
-import com.amazonaws.services.s3.S3ResponseMetadata;
-import com.amazonaws.services.s3.model.*;
-import com.amazonaws.services.s3.model.analytics.AnalyticsConfiguration;
-import com.amazonaws.services.s3.model.inventory.InventoryConfiguration;
-import com.amazonaws.services.s3.model.metrics.MetricsConfiguration;
-import com.amazonaws.services.s3.waiters.AmazonS3Waiters;
-import com.amazonaws.services.securitytoken.AWSSecurityTokenService;
-import com.amazonaws.waiters.Waiter;
-import com.amazonaws.waiters.WaiterHandler;
-import com.amazonaws.waiters.WaiterParameters;
-import com.amazonaws.waiters.WaiterTimedOutException;
-import com.amazonaws.waiters.WaiterUnrecoverableException;
+import software.amazon.awssdk.services.s3.model.*;
 
 /**
  * Created by Michael Leedahl on 6/23/17.
@@ -62,13 +42,13 @@ public class TestCloudFormationDeploy {
      * this mocking scenario, this method overrides the S3 and STS Client Builders as well as initialize the test
      * of the execute function.  Then it invokes the execute function of the plugin for unit testing.
      */
-    static private class OverridePlugin extends CloudFormationDeployMavenPlugin implements AWSSecurityTokenService {
+    static public class OverridePlugin extends CloudFormationDeployMavenPlugin implements StsClient {
 
-        static {stsBuilder = OverridePlugin.class;}
         static {s3Builder = s3Client.class;}
-        static {cfBuilder = cfClient.class;}
+        static {cfAsyncBuilder = cfClient.class;}
+        static {stsBuilder = OverridePlugin.class;}
 
-        static public AWSSecurityTokenService defaultClient() {
+        static public StsClient create() {
 
             return new OverridePlugin();
         }
@@ -80,18 +60,19 @@ public class TestCloudFormationDeploy {
          * @return a result that contains the new set of credentials to use in the mock.
          */
         @Override
-        public AssumeRoleResult assumeRole(AssumeRoleRequest assumeRoleRequest) {
+        public AssumeRoleResponse assumeRole(AssumeRoleRequest assumeRoleRequest) {
 
-            Assert.assertTrue(assumeRoleRequest.getRoleArn().equals("aws:iam::1111:role/test"));
+            Assert.assertEquals(assumeRoleRequest.roleArn(), "aws:iam::1111:role/test");
 
-            return new AssumeRoleResult()
-                    .withCredentials(new Credentials()
-                            .withAccessKeyId("A")
-                            .withSecretAccessKey("B")
-                            .withSessionToken("C")
-                            .withExpiration(new Date(LocalDateTime.now()
-                                    .plusHours(1)
-                                    .toEpochSecond(ZoneOffset.UTC))));
+
+            return AssumeRoleResponse.builder()
+                    .credentials(Credentials.builder()
+                            .accessKeyId("A")
+                            .secretAccessKey("B")
+                            .sessionToken("C")
+                            .expiration(Instant.now().plus(1, ChronoUnit.HOURS))
+                            .build())
+                    .build();
         }
 
         /**
@@ -159,69 +140,15 @@ public class TestCloudFormationDeploy {
             roleArnParam.set(this, value);
         }
 
-        //#region The rest of the methods are not part of this mocking scenario
         @Override
-        @Deprecated
-        public void setEndpoint(String s) {
-
-        }
-
-        @Override
-        @Deprecated
-        public void setRegion(Region region) {
-
-        }
-
-        @Override
-        public AssumeRoleWithSAMLResult assumeRoleWithSAML(AssumeRoleWithSAMLRequest assumeRoleWithSAMLRequest) {
+        public String serviceName() {
             return null;
         }
 
         @Override
-        public AssumeRoleWithWebIdentityResult assumeRoleWithWebIdentity(AssumeRoleWithWebIdentityRequest assumeRoleWithWebIdentityRequest) {
-            return null;
-        }
-
-        @Override
-        public DecodeAuthorizationMessageResult decodeAuthorizationMessage(DecodeAuthorizationMessageRequest decodeAuthorizationMessageRequest) {
-            return null;
-        }
-
-        @Override
-        public GetAccessKeyInfoResult getAccessKeyInfo(GetAccessKeyInfoRequest getAccessKeyInfoRequest) {
-            return null;
-        }
-
-        @Override
-        public GetCallerIdentityResult getCallerIdentity(GetCallerIdentityRequest getCallerIdentityRequest) {
-            return null;
-        }
-
-        @Override
-        public GetFederationTokenResult getFederationToken(GetFederationTokenRequest getFederationTokenRequest) {
-            return null;
-        }
-
-        @Override
-        public GetSessionTokenResult getSessionToken(GetSessionTokenRequest getSessionTokenRequest) {
-            return null;
-        }
-
-        @Override
-        public GetSessionTokenResult getSessionToken() {
-            return null;
-        }
-
-        @Override
-        public void shutdown() {
+        public void close() {
 
         }
-
-        @Override
-        public ResponseMetadata getCachedResponseMetadata(AmazonWebServiceRequest amazonWebServiceRequest) {
-            return null;
-        }
-        //#endregion
     }
 
     /**
@@ -241,10 +168,10 @@ public class TestCloudFormationDeploy {
      * is used to create or update a new stack.  The stack defines the infrastructure needed for the jar that will
      * be deployed.  The cloud formation stack also deploys the jar into this infrastructure.
      */
-    static public class cfClient implements AmazonCloudFormation {
+    static public class cfClient implements CloudFormationAsyncClient {
 
         //#region Mocking methods for CloudFormation Client Builder
-        private AWSCredentialsProvider credentials = null;
+        private AwsCredentialsProvider credentials = null;
 
         /**
          * Use to mock the setting of credentials.
@@ -252,27 +179,27 @@ public class TestCloudFormationDeploy {
          * @param credentials are the credentials to create the mock client with.
          * @return a reference to this instance for initialization chaining.
          */
-        public cfClient withCredentials(AWSCredentialsProvider credentials) {
+        public cfClient credentialsProvider(AwsCredentialsProvider credentials) {
 
-            Assert.assertTrue(credentials.getCredentials().getAWSAccessKeyId().equals("A"));
-            Assert.assertTrue(credentials.getCredentials().getAWSSecretKey().equals("B"));
-            Assert.assertTrue(((BasicSessionCredentials)credentials.getCredentials()).getSessionToken().equals("C"));
+            Assert.assertTrue(credentials.resolveCredentials().accessKeyId().equals("A"));
+            Assert.assertTrue(credentials.resolveCredentials().secretAccessKey().equals("B"));
+            Assert.assertTrue(((AwsSessionCredentials)credentials.resolveCredentials()).sessionToken().equals("C"));
 
             this.credentials = credentials;
             return this;
         }
 
-        static public AmazonCloudFormation defaultClient() {
+        static public CloudFormationAsyncClient create() {
 
             return new cfClient();
         }
 
-        static public cfClient standard() {
+        static public cfClient builder() {
 
             return new cfClient();
         }
 
-        public AmazonCloudFormation build() {
+        public CloudFormationAsyncClient build() {
 
             return this;
         }
@@ -289,23 +216,26 @@ public class TestCloudFormationDeploy {
          * @return a result indicating the properties of the existing stack.
          */
         @Override
-        public DescribeStacksResult describeStacks(DescribeStacksRequest describeStacksRequest) {
+        public CompletableFuture<DescribeStacksResponse> describeStacks(DescribeStacksRequest describeStacksRequest) {
 
-            if(StackScenario.createTest && !StackScenario.createTestComplete)
-                throw new AmazonCloudFormationException("Stack doesn't exist.");
+            return CompletableFuture.supplyAsync(() -> {
+                try {Thread.sleep(500);}
+                catch (InterruptedException e) {/*Ignore*/}
 
-            Collection<Output> outputs = new ArrayList<>();
-            Output output = new Output().withOutputKey("HELLO").withOutputValue("World");
-            outputs.add(output);
+                if(StackScenario.createTest && !StackScenario.createTestComplete)
+                    throw CloudFormationException.builder().message("Stack doesn't exist.").build();
 
-            Stack stack = new Stack();
-            stack.setOutputs(outputs);
-            stack.setStackName("Test");
+                Collection<Output> outputs = new ArrayList<>();
+                Output output = Output.builder().outputKey("HELLO").outputValue("World").build();
+                outputs.add(output);
 
-            ArrayList<Stack> stacks = new ArrayList<>();
-            stacks.add(stack);
+                Stack stack = Stack.builder().outputs(outputs).stackName("Test").build();
 
-            return new DescribeStacksResult().withStacks(stacks);
+                ArrayList<Stack> stacks = new ArrayList<>();
+                stacks.add(stack);
+
+                return DescribeStacksResponse.builder().stacks(stacks).build();
+            });
         }
 
         /**
@@ -316,13 +246,15 @@ public class TestCloudFormationDeploy {
          * @return a result of the stack creation.
          */
         @Override
-        public CreateStackResult createStack(CreateStackRequest createStackRequest) {
+        public CompletableFuture<CreateStackResponse> createStack(CreateStackRequest createStackRequest) {
 
-            Assert.assertTrue(createStackRequest.getStackName().equals("Test"));
+            return CompletableFuture.supplyAsync(() -> {
+                Assert.assertEquals(createStackRequest.stackName(), "Test");
+                StackScenario.createTestComplete = true;
 
-            return new CreateStackResult()
-                    .withStackId("arn:aws:cloudformation:us-east-1:1111:stack/Test/" +
-                            UUID.randomUUID().toString());
+                return CreateStackResponse.builder()
+                        .stackId("arn:aws:cloudformation:us-east-1:1111:stack/Test/" + UUID.randomUUID().toString()).build();
+            });
         }
 
         /**
@@ -333,28 +265,16 @@ public class TestCloudFormationDeploy {
          * @return the result of the update operation.
          */
         @Override
-        public UpdateStackResult updateStack(UpdateStackRequest updateStackRequest) {
+        public CompletableFuture<ExecuteChangeSetResponse> executeChangeSet(ExecuteChangeSetRequest updateStackRequest) {
 
-            Assert.assertTrue(updateStackRequest.getStackName().equals("Test"));
+            return CompletableFuture.supplyAsync(() -> {
+                Assert.assertEquals(updateStackRequest.stackName(), "Test");
 
-            return new UpdateStackResult()
-                    .withStackId("arn:aws:cloudformation:us-east-1:1111:stack/Test/" +
-                            UUID.randomUUID().toString());
+                return ExecuteChangeSetResponse.builder().build();
+            });
         }
 
-        /**
-         * Use this method to return mock waiter to pretend to wait for the cloud formation operation to finish.
-         *
-         * @return a mock waiter instance.
-         */
-        @Override
-        public AmazonCloudFormationWaiters waiters() {
-
-            return StackScenario.createTest ? MockWaiter.defaultClient() : StackScenario.changeset ?
-                    MockWaiterChangeSet.defaultClient() : MockWaiter.defaultClient();
-        }
-
-        /**
+       /**
          * Use this method to mock creating a change set.  In this scenario we validate that the request is for the
          * stack we want to update.  It returns a blank response.
          *
@@ -362,13 +282,15 @@ public class TestCloudFormationDeploy {
          * @return a result of initiating the creation of the change set.
          */
         @Override
-        public CreateChangeSetResult createChangeSet(CreateChangeSetRequest createChangeSetRequest) {
+        public CompletableFuture<CreateChangeSetResponse> createChangeSet(CreateChangeSetRequest createChangeSetRequest) {
 
-            Assert.assertTrue(createChangeSetRequest.getStackName().equals("Test"));
-            Assert.assertTrue(createChangeSetRequest.getChangeSetType().equals("UPDATE"));
+            return CompletableFuture.supplyAsync(() -> {
+                Assert.assertTrue(createChangeSetRequest.stackName().equals("Test"));
+                Assert.assertTrue(createChangeSetRequest.changeSetType().toString().equals("UPDATE"));
 
-            return new CreateChangeSetResult().withStackId("arn:aws:cloudformation:us-east-1:1111:stack/Test/" +
-                    UUID.randomUUID().toString());
+                return CreateChangeSetResponse.builder().stackId("arn:aws:cloudformation:us-east-1:1111:stack/Test/" +
+                        UUID.randomUUID().toString()).build();
+            });
         }
 
         /**
@@ -379,386 +301,31 @@ public class TestCloudFormationDeploy {
          * @return a response with the status of a change set request.
          */
         @Override
-        public DescribeChangeSetResult describeChangeSet(DescribeChangeSetRequest describeChangeSetRequest) {
+        public CompletableFuture<DescribeChangeSetResponse> describeChangeSet(DescribeChangeSetRequest describeChangeSetRequest) {
 
-            Assert.assertTrue(describeChangeSetRequest.getStackName().equals("Test"));
+            return CompletableFuture.supplyAsync(() -> {
+                Assert.assertTrue(describeChangeSetRequest.stackName().equals("Test"));
 
-            Collection<Change> changes = new ArrayList<>();
-            Change change = new Change();
-            changes.add(change);
+                Collection<Change> changes = new ArrayList<>();
+                Change change = Change.builder().build();
+                changes.add(change);
 
-            return new DescribeChangeSetResult()
-                    .withChanges(changes)
-                    .withStatus("CREATE_COMPLETE")
-                    .withStackId("arn:aws:cloudformation:us-east-1:1111:stack/Test/" +
-                            UUID.randomUUID().toString());
-        }
-
-        //#region Methods not used in this mocking scenario.
-        @Override
-        @Deprecated
-        public void setEndpoint(String s) {
-
+                return DescribeChangeSetResponse.builder()
+                        .changes(changes)
+                        .status("CREATE_COMPLETE")
+                        .stackId("arn:aws:cloudformation:us-east-1:1111:stack/Test/" +
+                                UUID.randomUUID().toString()).build();
+            });
         }
 
         @Override
-        @Deprecated
-        public void setRegion(Region region) {
-
-        }
-
-        @Override
-        public CancelUpdateStackResult cancelUpdateStack(CancelUpdateStackRequest cancelUpdateStackRequest) {
+        public String serviceName() {
             return null;
         }
 
         @Override
-        public ContinueUpdateRollbackResult continueUpdateRollback(ContinueUpdateRollbackRequest continueUpdateRollbackRequest) {
-            return null;
-        }
+        public void close() {
 
-        @Override
-        public CreateStackInstancesResult createStackInstances(CreateStackInstancesRequest createStackInstancesRequest) {
-            return null;
-        }
-
-        @Override
-        public CreateStackSetResult createStackSet(CreateStackSetRequest createStackSetRequest) {
-            return null;
-        }
-
-        @Override
-        public DeleteChangeSetResult deleteChangeSet(DeleteChangeSetRequest deleteChangeSetRequest) {
-            return null;
-        }
-
-        @Override
-        public DeleteStackResult deleteStack(DeleteStackRequest deleteStackRequest) {
-            return null;
-        }
-
-        @Override
-        public DeleteStackInstancesResult deleteStackInstances(DeleteStackInstancesRequest deleteStackInstancesRequest) {
-            return null;
-        }
-
-        @Override
-        public DeleteStackSetResult deleteStackSet(DeleteStackSetRequest deleteStackSetRequest) {
-            return null;
-        }
-
-        @Override
-        public DeregisterTypeResult deregisterType(DeregisterTypeRequest deregisterTypeRequest) {
-            return null;
-        }
-
-        @Override
-        public DescribeAccountLimitsResult describeAccountLimits(DescribeAccountLimitsRequest describeAccountLimitsRequest) {
-            return null;
-        }
-
-        @Override
-        public DescribeStackEventsResult describeStackEvents(DescribeStackEventsRequest describeStackEventsRequest) {
-            return null;
-        }
-
-        @Override
-        public DescribeStackInstanceResult describeStackInstance(DescribeStackInstanceRequest describeStackInstanceRequest) {
-            return null;
-        }
-
-        @Override
-        public DescribeStackResourceResult describeStackResource(DescribeStackResourceRequest describeStackResourceRequest) {
-            return null;
-        }
-
-        @Override
-        public DescribeStackResourcesResult describeStackResources(DescribeStackResourcesRequest describeStackResourcesRequest) {
-            return null;
-        }
-
-        @Override
-        public DescribeStackSetResult describeStackSet(DescribeStackSetRequest describeStackSetRequest) {
-            return null;
-        }
-
-        @Override
-        public DescribeStackSetOperationResult describeStackSetOperation(DescribeStackSetOperationRequest describeStackSetOperationRequest) {
-            return null;
-        }
-
-        @Override
-        public DescribeStacksResult describeStacks() {
-            return null;
-        }
-
-        @Override
-        public DescribeTypeResult describeType(DescribeTypeRequest describeTypeRequest) {
-            return null;
-        }
-
-        @Override
-        public DescribeTypeRegistrationResult describeTypeRegistration(DescribeTypeRegistrationRequest describeTypeRegistrationRequest) {
-            return null;
-        }
-
-        @Override
-        public EstimateTemplateCostResult estimateTemplateCost(EstimateTemplateCostRequest estimateTemplateCostRequest) {
-            return null;
-        }
-
-        @Override
-        public EstimateTemplateCostResult estimateTemplateCost() {
-            return null;
-        }
-
-        @Override
-        public ExecuteChangeSetResult executeChangeSet(ExecuteChangeSetRequest executeChangeSetRequest) {
-            return null;
-        }
-
-        @Override
-        public GetStackPolicyResult getStackPolicy(GetStackPolicyRequest getStackPolicyRequest) {
-            return null;
-        }
-
-        @Override
-        public GetTemplateResult getTemplate(GetTemplateRequest getTemplateRequest) {
-            return null;
-        }
-
-        @Override
-        public GetTemplateSummaryResult getTemplateSummary(GetTemplateSummaryRequest getTemplateSummaryRequest) {
-            return null;
-        }
-
-        @Override
-        public GetTemplateSummaryResult getTemplateSummary() {
-            return null;
-        }
-
-        @Override
-        public ListChangeSetsResult listChangeSets(ListChangeSetsRequest listChangeSetsRequest) {
-            return null;
-        }
-
-        @Override
-        public ListExportsResult listExports(ListExportsRequest listExportsRequest) {
-            return null;
-        }
-
-        @Override
-        public ListImportsResult listImports(ListImportsRequest listImportsRequest) {
-            return null;
-        }
-
-        @Override
-        public ListStackInstancesResult listStackInstances(ListStackInstancesRequest listStackInstancesRequest) {
-            return null;
-        }
-
-        @Override
-        public ListStackResourcesResult listStackResources(ListStackResourcesRequest listStackResourcesRequest) {
-            return null;
-        }
-
-        @Override
-        public ListStackSetOperationResultsResult listStackSetOperationResults(ListStackSetOperationResultsRequest listStackSetOperationResultsRequest) {
-            return null;
-        }
-
-        @Override
-        public ListStackSetOperationsResult listStackSetOperations(ListStackSetOperationsRequest listStackSetOperationsRequest) {
-            return null;
-        }
-
-        @Override
-        public ListStackSetsResult listStackSets(ListStackSetsRequest listStackSetsRequest) {
-            return null;
-        }
-
-        @Override
-        public ListStacksResult listStacks(ListStacksRequest listStacksRequest) {
-            return null;
-        }
-
-        @Override
-        public ListStacksResult listStacks() {
-            return null;
-        }
-
-        @Override
-        public ListTypeRegistrationsResult listTypeRegistrations(ListTypeRegistrationsRequest listTypeRegistrationsRequest) {
-            return null;
-        }
-
-        @Override
-        public ListTypeVersionsResult listTypeVersions(ListTypeVersionsRequest listTypeVersionsRequest) {
-            return null;
-        }
-
-        @Override
-        public ListTypesResult listTypes(ListTypesRequest listTypesRequest) {
-            return null;
-        }
-
-        @Override
-        public RecordHandlerProgressResult recordHandlerProgress(RecordHandlerProgressRequest recordHandlerProgressRequest) {
-            return null;
-        }
-
-        @Override
-        public RegisterTypeResult registerType(RegisterTypeRequest registerTypeRequest) {
-            return null;
-        }
-
-        @Override
-        public SetStackPolicyResult setStackPolicy(SetStackPolicyRequest setStackPolicyRequest) {
-            return null;
-        }
-
-        @Override
-        public SetTypeDefaultVersionResult setTypeDefaultVersion(SetTypeDefaultVersionRequest setTypeDefaultVersionRequest) {
-            return null;
-        }
-
-        @Override
-        public SignalResourceResult signalResource(SignalResourceRequest signalResourceRequest) {
-            return null;
-        }
-
-        @Override
-        public StopStackSetOperationResult stopStackSetOperation(StopStackSetOperationRequest stopStackSetOperationRequest) {
-            return null;
-        }
-
-        @Override
-        public UpdateStackSetResult updateStackSet(UpdateStackSetRequest updateStackSetRequest) {
-            return null;
-        }
-
-        @Override
-        public ValidateTemplateResult validateTemplate(ValidateTemplateRequest validateTemplateRequest) {
-            return null;
-        }
-
-        @Override
-        public void shutdown() {
-
-        }
-
-        @Override
-        public ResponseMetadata getCachedResponseMetadata(AmazonWebServiceRequest amazonWebServiceRequest) {
-            return null;
-        }
-
-        @Override
-        public UpdateStackInstancesResult updateStackInstances(UpdateStackInstancesRequest updateStackInstancesRequest) {
-            return null;
-        }
-
-        @Override
-        public UpdateTerminationProtectionResult updateTerminationProtection(UpdateTerminationProtectionRequest updateTerminationProtectionRequest) {
-            return null;
-        }
-
-        @Override
-        public DescribeStackDriftDetectionStatusResult describeStackDriftDetectionStatus(DescribeStackDriftDetectionStatusRequest describeStackDriftDetectionStatusRequest) {
-            return null;
-        }
-
-        @Override
-        public DescribeStackResourceDriftsResult describeStackResourceDrifts(DescribeStackResourceDriftsRequest describeStackResourceDriftsRequest) {
-            return null;
-        }
-
-        @Override
-        public DetectStackDriftResult detectStackDrift(DetectStackDriftRequest detectStackDriftRequest) {
-            return null;
-        }
-
-        @Override
-        public DetectStackResourceDriftResult detectStackResourceDrift(DetectStackResourceDriftRequest detectStackResourceDriftRequest) {
-            return null;
-        }
-
-        @Override
-        public DetectStackSetDriftResult detectStackSetDrift(DetectStackSetDriftRequest detectStackSetDriftRequest) {
-            return null;
-        }
-        //#endregion
-    }
-
-    /**
-     * Use to mock the CloudFormation Waiters.  The waiter returns immediately in this mock.
-     */
-    private static class MockWaiter extends AmazonCloudFormationWaiters implements Waiter<DescribeStacksRequest> {
-
-        private static AmazonCloudFormationWaiters defaultClient() {
-            return new MockWaiter(cfClient.defaultClient());
-        }
-
-        private MockWaiter(AmazonCloudFormation client) {
-            super(client);
-        }
-
-        @Override
-        public void run(WaiterParameters<DescribeStacksRequest> waiterParameters) throws AmazonServiceException, WaiterTimedOutException, WaiterUnrecoverableException {
-
-        }
-
-        @Override
-        public Future<Void> runAsync(WaiterParameters<DescribeStacksRequest> waiterParameters, WaiterHandler waiterHandler) throws AmazonServiceException, WaiterTimedOutException, WaiterUnrecoverableException {
-            return null;
-        }
-
-        @Override
-        public Waiter<DescribeStacksRequest> stackCreateComplete() {
-
-            StackScenario.createTestComplete = true;
-            return this;
-        }
-
-        @Override
-        public Waiter<DescribeStacksRequest> stackUpdateComplete() {
-            return this;
-        }
-    }
-
-    /**
-     * Use to mock the CloudFormation Waiters for Change Sets.  The waiter returns immediately in this mock.
-     */
-    private static class MockWaiterChangeSet extends AmazonCloudFormationWaiters
-            implements Waiter<DescribeChangeSetRequest> {
-
-        private static AmazonCloudFormationWaiters defaultClient() {
-            return new MockWaiter(cfClient.defaultClient());
-        }
-
-        private MockWaiterChangeSet(AmazonCloudFormation client) {
-            super(client);
-        }
-
-        @Override
-        public void run(WaiterParameters<DescribeChangeSetRequest> waiterParameters)
-                throws AmazonServiceException, WaiterTimedOutException, WaiterUnrecoverableException {
-
-        }
-
-        @Override
-        public Future<Void> runAsync(WaiterParameters<DescribeChangeSetRequest> waiterParameters,
-                                     WaiterHandler waiterHandler)
-                throws AmazonServiceException, WaiterTimedOutException, WaiterUnrecoverableException {
-
-            return null;
-        }
-
-        @Override
-        public Waiter<DescribeChangeSetRequest> changeSetCreateComplete() {
-
-            StackScenario.changeset = false;
-
-            return this;
         }
     }
 
@@ -766,10 +333,10 @@ public class TestCloudFormationDeploy {
      * Use to mock an S3 Client and S3 Client Builder.  In this mock scenario, a jar file is sent to an S3 bucket so
      * that a CloudFormation Stack can reference the file from the S3 bucket and deploy it to a lambda.
      */
-    static public class s3Client implements AmazonS3 {
+    static public class s3Client implements S3Client {
 
         //#region Mocking methods for S3 Client Builder
-        private AWSCredentialsProvider credentials = null;
+        private AwsCredentialsProvider credentials = null;
 
         /**
          * Use to mock the setting of credentials.
@@ -777,27 +344,27 @@ public class TestCloudFormationDeploy {
          * @param credentials are the credentials to create the mock client with.
          * @return a reference to this instance for initialization chaining.
          */
-        public s3Client withCredentials(AWSCredentialsProvider credentials) {
+        public s3Client credentialsProvider(AwsCredentialsProvider credentials) {
 
-            Assert.assertTrue(credentials.getCredentials().getAWSAccessKeyId().equals("A"));
-            Assert.assertTrue(credentials.getCredentials().getAWSSecretKey().equals("B"));
-            Assert.assertTrue(((BasicSessionCredentials)credentials.getCredentials()).getSessionToken().equals("C"));
+            Assert.assertTrue(credentials.resolveCredentials().accessKeyId().equals("A"));
+            Assert.assertTrue(credentials.resolveCredentials().secretAccessKey().equals("B"));
+            Assert.assertTrue(((AwsSessionCredentials)credentials.resolveCredentials()).sessionToken().equals("C"));
 
             this.credentials = credentials;
             return this;
         }
 
-        static public AmazonS3 defaultClient() {
+        static public S3Client create() {
 
             return new s3Client();
         }
 
-        static public s3Client standard() {
+        static public s3Client builder() {
 
             return new s3Client();
         }
 
-        public AmazonS3 build() {
+        public S3Client build() {
 
             return this;
         }
@@ -806,921 +373,33 @@ public class TestCloudFormationDeploy {
         /**
          * Use this method to mock the sending of a file to s3.
          *
-         * @param s is the bucket to put the file in.
-         * @param s1 is the name of the file to put in the bucket.
-         * @param file is the file to upload to the bucket.
+         * @param x is put object request with bucket and key..
+         * @param y is the body of the file.
          * @return a result object to indicate the mock has stored the file.
          * @throws SdkClientException
-         * @throws AmazonServiceException
          */
         @Override
-        public PutObjectResult putObject(String s, String s1, File file)
-                throws SdkClientException, AmazonServiceException {
+        public PutObjectResponse putObject(PutObjectRequest x, RequestBody y)
+                throws SdkClientException {
 
-            Assert.assertTrue(s.equals("Test"));
-            Assert.assertTrue(s1.equals("application-test-1.0.jar"));
+            if(x.bucket().equals("Test")) Assert.assertTrue(x.key().equals("application-test-1.0.jar"));
+            else {
+                Assert.assertTrue(x.bucket().equals("bucket"));
+                Assert.assertTrue(x.key().endsWith("-Test-Test-Template.json"));
+            }
 
-            return new PutObjectResult();
+            return PutObjectResponse.builder().build();
         }
 
-        //#region Methods not used in this mocking scenario.
         @Override
-        public void setEndpoint(String s) {
-
-        }
-
-        @Override
-        public void setRegion(Region region) throws IllegalArgumentException {
-
-        }
-
-        @Override
-        public void setS3ClientOptions(S3ClientOptions s3ClientOptions) {
-
-        }
-
-        @Override
-        @Deprecated
-        public void changeObjectStorageClass(String s, String s1, StorageClass storageClass) throws SdkClientException, AmazonServiceException {
-
-        }
-
-        @Override
-        @Deprecated
-        public void setObjectRedirectLocation(String s, String s1, String s2) throws SdkClientException, AmazonServiceException {
-
-        }
-
-        @Override
-        public ObjectListing listObjects(String s) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public ObjectListing listObjects(String s, String s1) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public ObjectListing listObjects(ListObjectsRequest listObjectsRequest) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public ListObjectsV2Result listObjectsV2(String s) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public ListObjectsV2Result listObjectsV2(String s, String s1) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public ListObjectsV2Result listObjectsV2(ListObjectsV2Request listObjectsV2Request) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public ObjectListing listNextBatchOfObjects(ObjectListing objectListing) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public ObjectListing listNextBatchOfObjects(ListNextBatchOfObjectsRequest listNextBatchOfObjectsRequest) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public VersionListing listVersions(String s, String s1) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public VersionListing listNextBatchOfVersions(VersionListing versionListing) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public VersionListing listNextBatchOfVersions(ListNextBatchOfVersionsRequest listNextBatchOfVersionsRequest) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public VersionListing listVersions(String s, String s1, String s2, String s3, String s4, Integer integer) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public VersionListing listVersions(ListVersionsRequest listVersionsRequest) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public Owner getS3AccountOwner() throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public Owner getS3AccountOwner(GetS3AccountOwnerRequest getS3AccountOwnerRequest) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        @Deprecated
-        public boolean doesBucketExist(String s) throws SdkClientException, AmazonServiceException {
-            return false;
-        }
-
-        @Override
-        public boolean doesBucketExistV2(String s) throws SdkClientException, AmazonServiceException {
-            return false;
-        }
-
-        @Override
-        public HeadBucketResult headBucket(HeadBucketRequest headBucketRequest) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public List<Bucket> listBuckets() throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public List<Bucket> listBuckets(ListBucketsRequest listBucketsRequest) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public String getBucketLocation(String s) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public String getBucketLocation(GetBucketLocationRequest getBucketLocationRequest) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public Bucket createBucket(CreateBucketRequest createBucketRequest) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public Bucket createBucket(String s) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        @Deprecated
-        public Bucket createBucket(String s, com.amazonaws.services.s3.model.Region region) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        @Deprecated
-        public Bucket createBucket(String s, String s1) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public AccessControlList getObjectAcl(String s, String s1) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public AccessControlList getObjectAcl(String s, String s1, String s2) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public AccessControlList getObjectAcl(GetObjectAclRequest getObjectAclRequest) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public void setObjectAcl(String s, String s1, AccessControlList accessControlList) throws SdkClientException, AmazonServiceException {
-
-        }
-
-        @Override
-        public void setObjectAcl(String s, String s1, CannedAccessControlList cannedAccessControlList) throws SdkClientException, AmazonServiceException {
-
-        }
-
-        @Override
-        public void setObjectAcl(String s, String s1, String s2, AccessControlList accessControlList) throws SdkClientException, AmazonServiceException {
-
-        }
-
-        @Override
-        public void setObjectAcl(String s, String s1, String s2, CannedAccessControlList cannedAccessControlList) throws SdkClientException, AmazonServiceException {
-
-        }
-
-        @Override
-        public void setObjectAcl(SetObjectAclRequest setObjectAclRequest) throws SdkClientException, AmazonServiceException {
-
-        }
-
-        @Override
-        public AccessControlList getBucketAcl(String s) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public void setBucketAcl(SetBucketAclRequest setBucketAclRequest) throws SdkClientException, AmazonServiceException {
-
-        }
-
-        @Override
-        public AccessControlList getBucketAcl(GetBucketAclRequest getBucketAclRequest) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public void setBucketAcl(String s, AccessControlList accessControlList) throws SdkClientException, AmazonServiceException {
-
-        }
-
-        @Override
-        public void setBucketAcl(String s, CannedAccessControlList cannedAccessControlList) throws SdkClientException, AmazonServiceException {
-
-        }
-
-        @Override
-        public ObjectMetadata getObjectMetadata(String s, String s1) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public ObjectMetadata getObjectMetadata(GetObjectMetadataRequest getObjectMetadataRequest) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public S3Object getObject(String s, String s1) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public S3Object getObject(GetObjectRequest getObjectRequest) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public ObjectMetadata getObject(GetObjectRequest getObjectRequest, File file) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public String getObjectAsString(String s, String s1) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public GetObjectTaggingResult getObjectTagging(GetObjectTaggingRequest getObjectTaggingRequest) {
-            return null;
-        }
-
-        @Override
-        public SetObjectTaggingResult setObjectTagging(SetObjectTaggingRequest setObjectTaggingRequest) {
-            return null;
-        }
-
-        @Override
-        public DeleteObjectTaggingResult deleteObjectTagging(DeleteObjectTaggingRequest deleteObjectTaggingRequest) {
-            return null;
-        }
-
-        @Override
-        public void deleteBucket(DeleteBucketRequest deleteBucketRequest) throws SdkClientException, AmazonServiceException {
-
-        }
-
-        @Override
-        public void deleteBucket(String s) throws SdkClientException, AmazonServiceException {
-
-        }
-
-        @Override
-        public PutObjectResult putObject(PutObjectRequest putObjectRequest) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public PutObjectResult putObject(String s, String s1, InputStream inputStream, ObjectMetadata objectMetadata) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public PutObjectResult putObject(String s, String s1, String s2) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public CopyObjectResult copyObject(String s, String s1, String s2, String s3) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public CopyObjectResult copyObject(CopyObjectRequest copyObjectRequest) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public CopyPartResult copyPart(CopyPartRequest copyPartRequest) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public void deleteObject(String s, String s1) throws SdkClientException, AmazonServiceException {
-
-        }
-
-        @Override
-        public void deleteObject(DeleteObjectRequest deleteObjectRequest) throws SdkClientException, AmazonServiceException {
-
-        }
-
-        @Override
-        public DeleteObjectsResult deleteObjects(DeleteObjectsRequest deleteObjectsRequest) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public void deleteVersion(String s, String s1, String s2) throws SdkClientException, AmazonServiceException {
-
-        }
-
-        @Override
-        public void deleteVersion(DeleteVersionRequest deleteVersionRequest) throws SdkClientException, AmazonServiceException {
-
-        }
-
-        @Override
-        public BucketLoggingConfiguration getBucketLoggingConfiguration(String s) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public BucketLoggingConfiguration getBucketLoggingConfiguration(GetBucketLoggingConfigurationRequest getBucketLoggingConfigurationRequest) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public void setBucketLoggingConfiguration(SetBucketLoggingConfigurationRequest setBucketLoggingConfigurationRequest) throws SdkClientException, AmazonServiceException {
-
-        }
-
-        @Override
-        public BucketVersioningConfiguration getBucketVersioningConfiguration(String s) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public BucketVersioningConfiguration getBucketVersioningConfiguration(GetBucketVersioningConfigurationRequest getBucketVersioningConfigurationRequest) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public void setBucketVersioningConfiguration(SetBucketVersioningConfigurationRequest setBucketVersioningConfigurationRequest) throws SdkClientException, AmazonServiceException {
-
-        }
-
-        @Override
-        public BucketLifecycleConfiguration getBucketLifecycleConfiguration(String s) {
-            return null;
-        }
-
-        @Override
-        public BucketLifecycleConfiguration getBucketLifecycleConfiguration(GetBucketLifecycleConfigurationRequest getBucketLifecycleConfigurationRequest) {
-            return null;
-        }
-
-        @Override
-        public void setBucketLifecycleConfiguration(String s, BucketLifecycleConfiguration bucketLifecycleConfiguration) {
-
-        }
-
-        @Override
-        public void setBucketLifecycleConfiguration(SetBucketLifecycleConfigurationRequest setBucketLifecycleConfigurationRequest) {
-
-        }
-
-        @Override
-        public void deleteBucketLifecycleConfiguration(String s) {
-
-        }
-
-        @Override
-        public void deleteBucketLifecycleConfiguration(DeleteBucketLifecycleConfigurationRequest deleteBucketLifecycleConfigurationRequest) {
-
-        }
-
-        @Override
-        public BucketCrossOriginConfiguration getBucketCrossOriginConfiguration(String s) {
-            return null;
-        }
-
-        @Override
-        public BucketCrossOriginConfiguration getBucketCrossOriginConfiguration(GetBucketCrossOriginConfigurationRequest getBucketCrossOriginConfigurationRequest) {
-            return null;
-        }
-
-        @Override
-        public void setBucketCrossOriginConfiguration(String s, BucketCrossOriginConfiguration bucketCrossOriginConfiguration) {
-
-        }
-
-        @Override
-        public void setBucketCrossOriginConfiguration(SetBucketCrossOriginConfigurationRequest setBucketCrossOriginConfigurationRequest) {
-
-        }
-
-        @Override
-        public void deleteBucketCrossOriginConfiguration(String s) {
-
-        }
-
-        @Override
-        public void deleteBucketCrossOriginConfiguration(DeleteBucketCrossOriginConfigurationRequest deleteBucketCrossOriginConfigurationRequest) {
-
-        }
-
-        @Override
-        public BucketTaggingConfiguration getBucketTaggingConfiguration(String s) {
-            return null;
-        }
-
-        @Override
-        public BucketTaggingConfiguration getBucketTaggingConfiguration(GetBucketTaggingConfigurationRequest getBucketTaggingConfigurationRequest) {
-            return null;
-        }
-
-        @Override
-        public void setBucketTaggingConfiguration(String s, BucketTaggingConfiguration bucketTaggingConfiguration) {
-
-        }
-
-        @Override
-        public void setBucketTaggingConfiguration(SetBucketTaggingConfigurationRequest setBucketTaggingConfigurationRequest) {
-
-        }
-
-        @Override
-        public void deleteBucketTaggingConfiguration(String s) {
-
-        }
-
-        @Override
-        public void deleteBucketTaggingConfiguration(DeleteBucketTaggingConfigurationRequest deleteBucketTaggingConfigurationRequest) {
-
-        }
-
-        @Override
-        public BucketNotificationConfiguration getBucketNotificationConfiguration(String s) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public BucketNotificationConfiguration getBucketNotificationConfiguration(GetBucketNotificationConfigurationRequest getBucketNotificationConfigurationRequest) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public void setBucketNotificationConfiguration(SetBucketNotificationConfigurationRequest setBucketNotificationConfigurationRequest) throws SdkClientException, AmazonServiceException {
-
-        }
-
-        @Override
-        public void setBucketNotificationConfiguration(String s, BucketNotificationConfiguration bucketNotificationConfiguration) throws SdkClientException, AmazonServiceException {
-
-        }
-
-        @Override
-        public BucketWebsiteConfiguration getBucketWebsiteConfiguration(String s) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public BucketWebsiteConfiguration getBucketWebsiteConfiguration(GetBucketWebsiteConfigurationRequest getBucketWebsiteConfigurationRequest) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public void setBucketWebsiteConfiguration(String s, BucketWebsiteConfiguration bucketWebsiteConfiguration) throws SdkClientException, AmazonServiceException {
-
-        }
-
-        @Override
-        public void setBucketWebsiteConfiguration(SetBucketWebsiteConfigurationRequest setBucketWebsiteConfigurationRequest) throws SdkClientException, AmazonServiceException {
-
-        }
-
-        @Override
-        public void deleteBucketWebsiteConfiguration(String s) throws SdkClientException, AmazonServiceException {
-
-        }
-
-        @Override
-        public void deleteBucketWebsiteConfiguration(DeleteBucketWebsiteConfigurationRequest deleteBucketWebsiteConfigurationRequest) throws SdkClientException, AmazonServiceException {
-
-        }
-
-        @Override
-        public BucketPolicy getBucketPolicy(String s) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public BucketPolicy getBucketPolicy(GetBucketPolicyRequest getBucketPolicyRequest) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public void setBucketPolicy(String s, String s1) throws SdkClientException, AmazonServiceException {
-
-        }
-
-        @Override
-        public void setBucketPolicy(SetBucketPolicyRequest setBucketPolicyRequest) throws SdkClientException, AmazonServiceException {
-
-        }
-
-        @Override
-        public void deleteBucketPolicy(String s) throws SdkClientException, AmazonServiceException {
-
-        }
-
-        @Override
-        public void deleteBucketPolicy(DeleteBucketPolicyRequest deleteBucketPolicyRequest) throws SdkClientException, AmazonServiceException {
-
-        }
-
-        @Override
-        public URL generatePresignedUrl(String s, String s1, Date date) throws SdkClientException {
-            return null;
-        }
-
-        @Override
-        public URL generatePresignedUrl(String s, String s1, Date date, HttpMethod httpMethod) throws SdkClientException {
-            return null;
-        }
-
-        @Override
-        public URL generatePresignedUrl(GeneratePresignedUrlRequest generatePresignedUrlRequest) throws SdkClientException {
-            return null;
-        }
-
-        @Override
-        public InitiateMultipartUploadResult initiateMultipartUpload(InitiateMultipartUploadRequest initiateMultipartUploadRequest) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public UploadPartResult uploadPart(UploadPartRequest uploadPartRequest) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public PartListing listParts(ListPartsRequest listPartsRequest) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public void abortMultipartUpload(AbortMultipartUploadRequest abortMultipartUploadRequest) throws SdkClientException, AmazonServiceException {
-
-        }
-
-        @Override
-        public CompleteMultipartUploadResult completeMultipartUpload(CompleteMultipartUploadRequest completeMultipartUploadRequest) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public MultipartUploadListing listMultipartUploads(ListMultipartUploadsRequest listMultipartUploadsRequest) throws SdkClientException, AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        public S3ResponseMetadata getCachedResponseMetadata(AmazonWebServiceRequest amazonWebServiceRequest) {
-            return null;
-        }
-
-        @Override
-        @Deprecated
-        public void restoreObject(RestoreObjectRequest restoreObjectRequest) throws AmazonServiceException {
-
-        }
-
-        @Override
-        public RestoreObjectResult restoreObjectV2(RestoreObjectRequest restoreObjectRequest) throws AmazonServiceException {
-            return null;
-        }
-
-        @Override
-        @Deprecated
-        public void restoreObject(String s, String s1, int i) throws AmazonServiceException {
-
-        }
-
-        @Override
-        public void enableRequesterPays(String s) throws AmazonServiceException, SdkClientException {
-
-        }
-
-        @Override
-        public void disableRequesterPays(String s) throws AmazonServiceException, SdkClientException {
-
-        }
-
-        @Override
-        public boolean isRequesterPaysEnabled(String s) throws AmazonServiceException, SdkClientException {
-            return false;
-        }
-
-        @Override
-        public void setBucketReplicationConfiguration(String s, BucketReplicationConfiguration bucketReplicationConfiguration) throws AmazonServiceException, SdkClientException {
-
-        }
-
-        @Override
-        public void setBucketReplicationConfiguration(SetBucketReplicationConfigurationRequest setBucketReplicationConfigurationRequest) throws AmazonServiceException, SdkClientException {
-
-        }
-
-        @Override
-        public BucketReplicationConfiguration getBucketReplicationConfiguration(String s) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public BucketReplicationConfiguration getBucketReplicationConfiguration(GetBucketReplicationConfigurationRequest getBucketReplicationConfigurationRequest) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public void deleteBucketReplicationConfiguration(String s) throws AmazonServiceException, SdkClientException {
-
-        }
-
-        @Override
-        public void deleteBucketReplicationConfiguration(DeleteBucketReplicationConfigurationRequest deleteBucketReplicationConfigurationRequest) throws AmazonServiceException, SdkClientException {
-
-        }
-
-        @Override
-        public boolean doesObjectExist(String s, String s1) throws AmazonServiceException, SdkClientException {
-            return false;
-        }
-
-        @Override
-        public BucketAccelerateConfiguration getBucketAccelerateConfiguration(String s) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public BucketAccelerateConfiguration getBucketAccelerateConfiguration(GetBucketAccelerateConfigurationRequest getBucketAccelerateConfigurationRequest) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public void setBucketAccelerateConfiguration(String s, BucketAccelerateConfiguration bucketAccelerateConfiguration) throws AmazonServiceException, SdkClientException {
-
-        }
-
-        @Override
-        public void setBucketAccelerateConfiguration(SetBucketAccelerateConfigurationRequest setBucketAccelerateConfigurationRequest) throws AmazonServiceException, SdkClientException {
-
-        }
-
-        @Override
-        public DeleteBucketMetricsConfigurationResult deleteBucketMetricsConfiguration(String s, String s1) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public DeleteBucketMetricsConfigurationResult deleteBucketMetricsConfiguration(DeleteBucketMetricsConfigurationRequest deleteBucketMetricsConfigurationRequest) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public GetBucketMetricsConfigurationResult getBucketMetricsConfiguration(String s, String s1) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public GetBucketMetricsConfigurationResult getBucketMetricsConfiguration(GetBucketMetricsConfigurationRequest getBucketMetricsConfigurationRequest) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public SetBucketMetricsConfigurationResult setBucketMetricsConfiguration(String s, MetricsConfiguration metricsConfiguration) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public SetBucketMetricsConfigurationResult setBucketMetricsConfiguration(SetBucketMetricsConfigurationRequest setBucketMetricsConfigurationRequest) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public ListBucketMetricsConfigurationsResult listBucketMetricsConfigurations(ListBucketMetricsConfigurationsRequest listBucketMetricsConfigurationsRequest) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public DeleteBucketAnalyticsConfigurationResult deleteBucketAnalyticsConfiguration(String s, String s1) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public DeleteBucketAnalyticsConfigurationResult deleteBucketAnalyticsConfiguration(DeleteBucketAnalyticsConfigurationRequest deleteBucketAnalyticsConfigurationRequest) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public GetBucketAnalyticsConfigurationResult getBucketAnalyticsConfiguration(String s, String s1) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public GetBucketAnalyticsConfigurationResult getBucketAnalyticsConfiguration(GetBucketAnalyticsConfigurationRequest getBucketAnalyticsConfigurationRequest) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public SetBucketAnalyticsConfigurationResult setBucketAnalyticsConfiguration(String s, AnalyticsConfiguration analyticsConfiguration) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public SetBucketAnalyticsConfigurationResult setBucketAnalyticsConfiguration(SetBucketAnalyticsConfigurationRequest setBucketAnalyticsConfigurationRequest) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public ListBucketAnalyticsConfigurationsResult listBucketAnalyticsConfigurations(ListBucketAnalyticsConfigurationsRequest listBucketAnalyticsConfigurationsRequest) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public DeleteBucketInventoryConfigurationResult deleteBucketInventoryConfiguration(String s, String s1) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public DeleteBucketInventoryConfigurationResult deleteBucketInventoryConfiguration(DeleteBucketInventoryConfigurationRequest deleteBucketInventoryConfigurationRequest) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public GetBucketInventoryConfigurationResult getBucketInventoryConfiguration(String s, String s1) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public GetBucketInventoryConfigurationResult getBucketInventoryConfiguration(GetBucketInventoryConfigurationRequest getBucketInventoryConfigurationRequest) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public SetBucketInventoryConfigurationResult setBucketInventoryConfiguration(String s, InventoryConfiguration inventoryConfiguration) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public SetBucketInventoryConfigurationResult setBucketInventoryConfiguration(SetBucketInventoryConfigurationRequest setBucketInventoryConfigurationRequest) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public ListBucketInventoryConfigurationsResult listBucketInventoryConfigurations(ListBucketInventoryConfigurationsRequest listBucketInventoryConfigurationsRequest) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public DeleteBucketEncryptionResult deleteBucketEncryption(String s) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public DeleteBucketEncryptionResult deleteBucketEncryption(DeleteBucketEncryptionRequest deleteBucketEncryptionRequest) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public GetBucketEncryptionResult getBucketEncryption(String s) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public GetBucketEncryptionResult getBucketEncryption(GetBucketEncryptionRequest getBucketEncryptionRequest) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public SetBucketEncryptionResult setBucketEncryption(SetBucketEncryptionRequest setBucketEncryptionRequest) throws AmazonServiceException, SdkClientException {
-            return null;
-        }
-
-        @Override
-        public void shutdown() {
-
-        }
-
-        @Override
-        public com.amazonaws.services.s3.model.Region getRegion() {
-            return null;
-        }
-
-        @Override
-        public String getRegionName() {
-            return null;
-        }
-
-        @Override
-        public URL getUrl(String s, String s1) {
-            return null;
-        }
-
-        @Override
-        public AmazonS3Waiters waiters() {
-            return null;
-        }
-
-        @Override
-        public SetPublicAccessBlockResult setPublicAccessBlock(SetPublicAccessBlockRequest setPublicAccessBlockRequest) {
-            return null;
-        }
-
-        @Override
-        public GetPublicAccessBlockResult getPublicAccessBlock(GetPublicAccessBlockRequest getPublicAccessBlockRequest) {
-            return null;
-        }
-
-        @Override
-        public DeletePublicAccessBlockResult deletePublicAccessBlock(DeletePublicAccessBlockRequest deletePublicAccessBlockRequest) {
-            return null;
-        }
-
-        @Override
-        public GetBucketPolicyStatusResult getBucketPolicyStatus(GetBucketPolicyStatusRequest getBucketPolicyStatusRequest) {
-            return null;
-        }
-
-        @Override
-        public SetObjectLegalHoldResult setObjectLegalHold(SetObjectLegalHoldRequest setObjectLegalHoldRequest) {
-            return null;
-        }
-
-        @Override
-        public GetObjectLegalHoldResult getObjectLegalHold(GetObjectLegalHoldRequest getObjectLegalHoldRequest) {
-            return null;
-        }
-
-        @Override
-        public SetObjectLockConfigurationResult setObjectLockConfiguration(SetObjectLockConfigurationRequest setObjectLockConfigurationRequest) {
-            return null;
-        }
-
-        @Override
-        public GetObjectLockConfigurationResult getObjectLockConfiguration(GetObjectLockConfigurationRequest getObjectLockConfigurationRequest) {
-            return null;
-        }
-
-        @Override
-        public SetObjectRetentionResult setObjectRetention(SetObjectRetentionRequest setObjectRetentionRequest) {
-            return null;
-        }
-
-        @Override
-        public GetObjectRetentionResult getObjectRetention(GetObjectRetentionRequest getObjectRetentionRequest) {
-            return null;
-        }
-
-        @Override
-        public PresignedUrlDownloadResult download(PresignedUrlDownloadRequest presignedUrlDownloadRequest) {
+        public String serviceName() {
             return null;
-        }
-
-        @Override
-        public void download(PresignedUrlDownloadRequest presignedUrlDownloadRequest, File file) {
-
         }
 
         @Override
-        public PresignedUrlUploadResult upload(PresignedUrlUploadRequest presignedUrlUploadRequest) {
-            return null;
-        }
+        public void close() {
 
-        @Override
-        public SelectObjectContentResult selectObjectContent(SelectObjectContentRequest arg0) throws AmazonServiceException, SdkClientException {
-            return null;
         }
-        //#endregion
     }
 
     /**
