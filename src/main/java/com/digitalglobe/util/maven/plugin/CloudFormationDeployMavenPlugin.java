@@ -2287,11 +2287,12 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                                 throw new MojoExecutionException("CloudFormation Error: " + describeResponse.stacks().get(0).stackStatusReason());
                         }
 
-                    } else {
-                        if (retry_count == 9) throw new MojoExecutionException("Invalid response from stack update.");
-                    }
+                        retry = false;
 
-                    retry = false;
+                    } else {
+                        if (retry_count == 2) throw new MojoExecutionException("Invalid response from stack update.");
+                        retry = true;
+                    }
 
                 } catch (Exception ex) {
 
