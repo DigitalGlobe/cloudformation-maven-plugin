@@ -2033,32 +2033,46 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
      * @param stackName is the name of the stack to investigate.
      * @return a flag indicating if the template was previously deployed.
      */
-    private boolean isTemplatePreviouslyDeployed(CloudFormationAsyncClient cfClient, String stackName) throws InterruptedException {
+    private boolean isTemplatePreviouslyDeployed(CloudFormationAsyncClient cfClient, String stackName)  {
         boolean cloudFormationExists = true;
         boolean retry;
+        int retry_count = 0;
+        Random random = new Random();
 
         do {
 
             try {
 
                 DescribeStacksResponse result = cfClient.describeStacks(DescribeStacksRequest.builder().stackName(stackName).build()).get();
-                if (result.stacks().size() <= 0) cloudFormationExists = false;
+                if ((result.stacks() != null) && (result.stacks().size() <= 0) && (retry_count == 2)) {
+                    cloudFormationExists = false;
+                    retry = false;
+                } else {
+                    retry = true;
+                    Thread.sleep(random.nextInt(5000) + 1);
+                }
 
-                retry = false;
+            } catch (InterruptedException ie) {
+
+                // Ignore interruptions and retry.
+                retry = true;
 
             } catch (ExecutionException acfEx) {
 
                 if (acfEx.getCause().getMessage().contains("Rate exceeded")) {
 
                     retry = true;
-                    try { Thread.sleep(1000); } catch (InterruptedException iex) {  /* Ignore */ }
 
                 } else {
 
-                    cloudFormationExists = false;
-                    retry = false;
+                    System.out.println("Error encountered (retry): " + acfEx.getMessage());
+                    retry = true;
                 }
+
+                try { Thread.sleep(random.nextInt(5000) + 1); } catch (InterruptedException iex) {  /* Ignore */ }
             }
+
+            retry_count++;
 
         } while(retry);
 
