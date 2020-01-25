@@ -2044,13 +2044,21 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
             try {
 
                 DescribeStacksResponse result = cfClient.describeStacks(DescribeStacksRequest.builder().stackName(stackName).build()).get();
-                if ((result.stacks() != null) && (result.stacks().size() <= 0) && (retry_count == 2)) {
+                if (((result.stacks() == null) || (result.stacks().size() < 1)) && (retry_count == 2)) {
+
                     cloudFormationExists = false;
                     retry = false;
-                } else {
+
+                } else if((result.stacks() != null) && (result.stacks().size() >= 1)) {
+
+                    retry = false;
+
+                } else if(retry_count < 2){
+
                     retry = true;
                     Thread.sleep(random.nextInt(5000) + 1);
-                }
+
+                } else retry = false;
 
             } catch (InterruptedException ie) {
 
@@ -2066,7 +2074,8 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                 } else {
 
                     System.out.println("Error encountered (retry): " + acfEx.getMessage());
-                    retry = true;
+                    retry = retry_count < 2;
+                    if(!retry) cloudFormationExists = false;
                 }
 
                 try { Thread.sleep(random.nextInt(5000) + 1); } catch (InterruptedException iex) {  /* Ignore */ }
