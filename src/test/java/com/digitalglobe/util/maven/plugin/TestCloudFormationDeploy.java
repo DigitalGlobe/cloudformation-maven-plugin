@@ -209,7 +209,7 @@ public class TestCloudFormationDeploy {
          * Use this method to determine if a stack exists and to get information about the stack for this mocking
          * scenario.  The mock of this method validates that you are looking for the stack in this mock.  It uses
          * a static class with with a create flag to signal if the current test is testing create or update.  In the
-         * create scenario it will throw an exception indicating that the stack doesn't exist.  In the update
+         * create scenario it will throw an exception indicating that the stack does not exist.  In the update
          * scenario it will return a result object.
          *
          * @param describeStacksRequest is a request containing the name of the stack to lookup.
@@ -223,7 +223,7 @@ public class TestCloudFormationDeploy {
                 catch (InterruptedException e) {/*Ignore*/}
 
                 if(StackScenario.createTest && !StackScenario.createTestComplete)
-                    throw CloudFormationException.builder().message("Stack doesn't exist.").build();
+                    throw CloudFormationException.builder().message("Stack does not exist.").build();
 
                 Collection<Output> outputs = new ArrayList<>();
                 Output output = Output.builder().outputKey("HELLO").outputValue("World").build();
