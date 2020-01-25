@@ -2071,6 +2071,11 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
                     retry = true;
 
+                } else if (acfEx.getCause().getMessage().contains("does not exist")) {
+
+                    retry = false;
+                    cloudFormationExists = false;
+
                 } else {
 
                     System.out.println("Error encountered (retry): " + acfEx.getMessage());
