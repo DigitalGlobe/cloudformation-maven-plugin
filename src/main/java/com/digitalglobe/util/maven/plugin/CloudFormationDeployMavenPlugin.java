@@ -2213,53 +2213,8 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
             } catch (Exception ex) {
 
-                if (ex.getCause().getMessage().equals("Resource never entered the desired state as it failed.")) {
-
-                    boolean describeRetry;
-                    do {
-
-                        try {
-
-                            changeSetToken = UUID.randomUUID().toString();
-                            DescribeChangeSetRequest describeChangeSetRequest = DescribeChangeSetRequest.builder()
-                                    .changeSetName(changeSetName)
-                                    .stackName(stackName)
-                                    .nextToken(changeSetToken)
-                                    .build();
-
-                            describeStacksResult = cfAsyncClient.describeChangeSet(describeChangeSetRequest).get();
-
-                            if (!describeStacksResult.statusReason().startsWith("The submitted information didn't contain changes.")) {
-
-                                throw new MojoExecutionException("ChangeSet Error: " + describeStacksResult.statusReason());
-
-                            } else {
-
-                                DeleteChangeSet(cfAsyncClient, stackName, changeSetName);
-                            }
-
-                            describeRetry = false;
-
-                        } catch (Exception dex) {
-
-                            describeRetry = isRetry(dex);
-                        }
-
-                    } while (describeRetry);
-
-                    retry = false;
-
-                } else {
-
-                    try {
-
-                        retry = isRetry(ex);
-
-                    } catch (Exception rex) {
-
-                        throw new MojoExecutionException("ChangeSet Error: " + ex.getMessage());
-                    }
-                }
+                retry = isRetry(ex);
+                if(!retry) throw new MojoExecutionException(ex.getMessage(), ex);
             }
 
         } while(retry);
@@ -2278,7 +2233,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                             .build();
 
                     cfAsyncClient.executeChangeSet(executeChangeSetRequest).get();
-                    WaitStackCreateUpdate(stackName, cfAsyncClient);
+                    WaitStackInProgress(stackName, cfAsyncClient);
 
                     DescribeStacksResponse describeResponse = cfAsyncClient.describeStacks(DescribeStacksRequest.builder()
                             .stackName(stackName).build()).get();
@@ -2286,10 +2241,14 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                     if(describeResponse.stacks().size() == 1) {
                         switch(describeResponse.stacks().get(0).stackStatus()) {
 
-                            case ROLLBACK_FAILED:
-                            case ROLLBACK_COMPLETE:
-                            case DELETE_FAILED:
-                                throw new MojoExecutionException("CloudFormation Error: " + describeResponse.stacks().get(0).stackStatusReason());
+                            case UPDATE_ROLLBACK_COMPLETE:
+                            case UPDATE_ROLLBACK_FAILED:
+                                String reason = (describeResponse.stacks() != null) && (describeResponse.stacks().size() == 1) &&
+                                        (describeResponse.stacks().get(0).stackStatusReason() != null) ?
+                                        "CloudFormation Error: " + describeResponse.stacks().get(0).stackStatusReason() :
+                                        "See CloudFormation Console for errors.";
+
+                                throw new MojoExecutionException("CloudFormation Error: " + reason);
                         }
 
                         retry = false;
@@ -2597,7 +2556,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
             try {
 
                 CreateStackResponse result = cfClient.createStack(request).get();
-                WaitStackCreateUpdate(stackName, cfClient);
+                WaitStackInProgress(stackName, cfClient);
 
                 DescribeStacksResponse describeResponse = cfClient.describeStacks(DescribeStacksRequest.builder()
                         .stackName(stackName).build()).get();
@@ -2624,7 +2583,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
      * @throws InterruptedException Occurs when a process is interrupted.
      * @throws ExecutionException Occurs when an error happens during the execution of the describe operation.
      */
-    private void WaitStackCreateUpdate(String stackName, CloudFormationAsyncClient cfClient)
+    private void WaitStackInProgress(String stackName, CloudFormationAsyncClient cfClient)
             throws InterruptedException, ExecutionException {
 
         boolean retry;
@@ -2639,6 +2598,13 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                 case CREATE_IN_PROGRESS:
                 case ROLLBACK_IN_PROGRESS:
                 case UPDATE_IN_PROGRESS:
+                case REVIEW_IN_PROGRESS:
+                case IMPORT_ROLLBACK_IN_PROGRESS:
+                case UPDATE_ROLLBACK_IN_PROGRESS:
+                case DELETE_IN_PROGRESS:
+                case IMPORT_IN_PROGRESS:
+                case UPDATE_COMPLETE_CLEANUP_IN_PROGRESS:
+                case UPDATE_ROLLBACK_COMPLETE_CLEANUP_IN_PROGRESS:
                     retry = true;
                     Thread.sleep(random.nextInt(10000) + 1);
                     break;
