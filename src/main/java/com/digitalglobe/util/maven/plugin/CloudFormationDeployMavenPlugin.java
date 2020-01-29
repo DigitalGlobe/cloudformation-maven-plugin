@@ -2350,7 +2350,9 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                                            StackInputParameter[] inputParameters, Map<String, String> outputParameters)
             throws IOException, MojoExecutionException {
 
-        String parametersString = new String(Files.readAllBytes(Paths.get(stackParameterFilePath)));
+        File file = new File(stackParameterFilePath);
+
+        String parametersString = new String(Files.readAllBytes(Paths.get(file.toURI())));
 
         ObjectMapper mapper = new ObjectMapper();
         StackParameter[] parameters_array = mapper.readValue(parametersString.getBytes(), StackParameter[].class);
