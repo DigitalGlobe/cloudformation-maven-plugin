@@ -19,6 +19,7 @@ import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials;
 import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.cloudformation.CloudFormationAsyncClient;
 import software.amazon.awssdk.services.cloudformation.model.*;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -338,6 +339,7 @@ public class TestCloudFormationDeploy {
 
         //#region Mocking methods for S3 Client Builder
         private AwsCredentialsProvider credentials = null;
+        private Region region = null;
 
         /**
          * Use to mock the setting of credentials.
@@ -352,6 +354,12 @@ public class TestCloudFormationDeploy {
             Assert.assertTrue(((AwsSessionCredentials)credentials.resolveCredentials()).sessionToken().equals("C"));
 
             this.credentials = credentials;
+            return this;
+        }
+
+        public s3Client region(Region region) {
+
+            this.region = region;
             return this;
         }
 

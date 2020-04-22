@@ -423,6 +423,17 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
         String regionCondition = null;
 
         /**
+         * The name of the region where this parameter mapping is not valid.  If the deployment region matches the region
+         * in this condition, the parameter mapping is not executed.  If it doesn't match the region, the parameter mapping
+         * is executed.  This is useful when the output of command is not relevant for a particular region probably because
+         * the resource the command is referencing is implemented in another region and is a shared resource.  This condition,
+         * if satisfied, will prevent the command from executing .
+         *
+         * @parameter regionConditionExclude
+         */
+        String regionConditionExclude = null;
+
+        /**
          * The command syntax to run.  For example, to retrieve information about a VPN connection you may run the
          * describe-vpn-connections command.
          *
@@ -562,14 +573,35 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
         /**
          * The name of the region where this template is valid.  If the deployment region doesn't match the region
-         * in this condition, the template is not executed.  It it does match the region, the template is executed.
+         * in this condition, the template is not executed.  If it does match the region, the template is executed.
          * This is useful when a resource is only required in one region and all other regions will share that resource.
-         * This condition if not statisied will prevent the stack from executing and will not perform any output
+         * This condition if not satisfied will prevent the stack from executing and will not perform any output
          * parameter mappings including CLI command parameter mappings.
          *
          * @parameter regionCondition is the name of the region where this mapping is valid.
          */
         String regionCondition = null;
+
+        /**
+         * The name of the region where this template is not valid.  If the deployment region matches the region
+         * in this condition, the template is not executed.  If it doesn't match the region, the template is executed.
+         * This is useful when a resource is not relevant for a particular region probably because it is implemented in
+         * another region and is a shared resource or it is implemented in a different template.  This condition, if
+         * satisfied, will prevent the stack from executing and will not perform any output parameter mappings including
+         * CLI command parameter mappings.
+         *
+         * @parameter regionConditionExclude
+         */
+        String regionConditionExclude = null;
+
+        /**
+         * Use this flag to enable stackReadOnly flag when the region condition is not satisfied or the exclusion is satisfied.
+         * By default this is set to false indicating that when the region condition is not satisfied or the exclusion is
+         * satisfied the stack is ignored.
+         *
+         * @parameter regionConditionElseStackReadOnly
+         */
+        private boolean regionConditionElseStackReadOnly = false;
 
         /**
          * If this is specified, it represents a check of an output parameter value to determine if it equals a
@@ -767,6 +799,20 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
     }
 
     /**
+     * Use this flag when you wish to run the deployment of the master template and secondary templates in a
+     * different region then the pipeline is running.  This region will be used with regionCondition so that
+     * the regionCondition will compare against the override when it is set instead of the region in which the
+     * pipeline is running.  When the deploymentRegionOverride is null, it is considered as not set and the
+     * regionCondition will apply to the region in which the pipeline is running.  Furthermore, this flag
+     * will effectively set the region flag on the master template and secondary templates so that the template
+     * is deployed in the override region.  However, if you do set the region variable it will be the region
+     * used instead of the deploymentRegionOverride.
+     *
+     * @parameter deploymentRegionOverride
+     */
+    private String deploymentRegionOverride = null;
+
+    /**
      * Location of the file.
      *
      * @parameter outputDirectory contains the location of the file (i.e. ${project.build.directory}).
@@ -914,16 +960,37 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
     /**
      * The name of the region where the master template is valid.  If the deployment region doesn't match the
-     * region in this condition, the master template is not executed.  It it does match the region, the master template
+     * region in this condition, the master template is not executed.  If it does match the region, the master template
      * is executed.  This is useful when a resource is only required in one region (such as roles) and all other
      * regions will share that resource.  The flag doesn't prevent secondary stacks from executing.  It only determines
      * when the master stack template is executed.  Even if the master template is not executed, secondary stacks
      * may be executed.  If not statisfied, not only will the template not be executed, parameter mappings will not
-     * occur including CLI command output parameters.
+     * occur including CLI command output parameters, unless the regionConditionElseReodOnly is set to true.
      *
      * @parameter regionCondition is the name of the region where this mapping is valid.
      */
     private String regionCondition = null;
+
+    /**
+     * The name of the region where this template is not valid.  If the deployment region matches the region
+     * in this condition, the template is not executed.  If it doesn't match the region, the template is executed.
+     * This is useful when a resource is not relevant for a particular region probably because it is implemented in
+     * another region and is a shared resource or it is implemented in a different template.  This condition, if
+     * satisfied, will prevent the stack from executing and will not perform any output parameter mappings including
+     * CLI command parameter mappings.
+     *
+     * @parameter regionConditionExclude
+     */
+    String regionConditionExclude = null;
+
+    /**
+     * Use this flag to enable stackReadOnly flag when the region condition is not satisfied or the exclusion is satisfied.
+     * By default this is set to false indicating that when the region condition is not satisfied or the exclusion is
+     * satisfied the stack is ignored.
+     *
+     * @parameter regionConditionElseStackReadOnly
+     */
+    private boolean regionConditionElseStackReadOnly = false;
 
     /**
      * An optional list of input parameters for the stack template.  These can only include reserved matching parameters
@@ -1066,9 +1133,10 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
             for(int itemCount = 0; itemCount < stackParameterFileCount; itemCount++) {
 
                 // Renew S3 client
+                String currentRegion = effectiveRegion().toString();
                 S3Client s3Client = (sessionCredentials != null) ?
-                        new ClientBuilder<S3Client>().build(s3Builder, sessionCredentials) :
-                        new ClientBuilder<S3Client>().build(s3Builder);
+                        new ClientBuilder<S3Client>().withRegion(currentRegion).build(s3Builder, sessionCredentials) :
+                        new ClientBuilder<S3Client>().withRegion(currentRegion).build(s3Builder);
 
                 Map<String,String> masterOutputParameters = new HashMap<>();
                 if(artifacts && (copyAction == ArtifactCopyAction.BEFORE)) {
@@ -1091,6 +1159,13 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                 s3Client.putObject(templateRequest, RequestBody.fromFile(templateFile));
 
                 CloudFormationAsyncClient cfAsyncClient;
+                boolean testedRegionCondition = testRegionCondition(regionCondition, regionConditionExclude);
+                if((regionCondition != null) && !testedRegionCondition && regionConditionElseStackReadOnly) region = regionCondition;
+                else {
+                    if((regionCondition != null) && testedRegionCondition) region = regionCondition;
+                    else if((region == null) && (deploymentRegionOverride != null)) region = deploymentRegionOverride;
+                }
+
                 System.out.println("Region: " + (region == null ? "Empty" : region));
                 if(sessionCredentials != null) cfAsyncClient = (region == null) ?
                         new ClientBuilder<CloudFormationAsyncClient>().build(cfAsyncBuilder, sessionCredentials) :
@@ -1103,12 +1178,15 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                 // Read in the cloud formation template.
                 audit.write("Stack Parameter Path: " + stackParameterFilePaths[itemCount] + "\n");
 
-                if(testRegionCondition(regionCondition)) {
+                if(testedRegionCondition || regionConditionElseStackReadOnly) {
+
+                    if(!testedRegionCondition && regionConditionElseStackReadOnly) stackReadOnly = true;
+                    String effectiveRegion = (region == null) && (deploymentRegionOverride != null) ? deploymentRegionOverride : region;
 
                     ExecuteTemplate(stackReadOnly, templateUrl, stackParameterFilePaths[itemCount], cfAsyncClient, s3Client,
                             stackName, null, null, sessionCredentials, inputParameters,
                             masterOutputParameters, outputParameterMappings, cliCommandOutputParameterMappings,
-                            null, region);
+                            null, effectiveRegion);
                 }
 
                 if(artifacts && (copyAction == ArtifactCopyAction.AFTER)) {
@@ -1134,10 +1212,20 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                     for(SecondaryStack stack : secondaryStackGroups[itemCount].stacks) {
 
                         // Renew S3 client
+                        testedRegionCondition = testRegionCondition(stack.regionCondition, stack.regionConditionExclude);
+                        if((stack.regionCondition != null) && !testedRegionCondition && stack.regionConditionElseStackReadOnly) {
+                            stack.region = stack.regionCondition;
+
+                        } else {
+                            if ((stack.regionCondition != null) && testedRegionCondition) stack.region = stack.regionCondition;
+                            else if ((stack.region == null) && (deploymentRegionOverride != null)) stack.region = deploymentRegionOverride;
+                        }
+
                         System.out.println("Stack Region: " + (stack.region == null ? "Empty" : stack.region));
+                        currentRegion = effectiveRegion().toString();
                         s3Client = (sessionCredentials != null) ?
-                                new ClientBuilder<S3Client>().build(s3Builder, sessionCredentials) :
-                                new ClientBuilder<S3Client>().build(s3Builder);
+                                new ClientBuilder<S3Client>().withRegion(currentRegion).build(s3Builder, sessionCredentials) :
+                                new ClientBuilder<S3Client>().withRegion(currentRegion).build(s3Builder);
 
                         AwsCredentialsProvider stackCredentials;
                         CloudFormationAsyncClient tempCfAsyncClient = cfAsyncClient;
@@ -1173,13 +1261,16 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                         s3Client.putObject(templateRequest, RequestBody.fromFile(templateFile));
                         templateUrl = "https://s3.amazonaws.com/" + templateS3Bucket + "/" + templateName;
 
-                        if(testRegionCondition(stack.regionCondition)) {
+                        if(testedRegionCondition || stack.regionConditionElseStackReadOnly) {
+
+                            if(!testedRegionCondition && stack.regionConditionElseStackReadOnly) stack.stackReadOnly = true;
+                            String effectiveRegion = (stack.region == null) && (deploymentRegionOverride != null) ? deploymentRegionOverride : stack.region;
 
                             ExecuteTemplate(stack.stackReadOnly, templateUrl, stack.stackParameterFilePath,
                                     tempCfAsyncClient, s3Client, secondaryStackName, stack.condition,
                                     stack.deploymentArtifactRegEx, stackCredentials, stack.inputParameters,
                                     outputParameters, stack.outputParameterMappings,
-                                    stack.cliCommandOutputParameterMappings, stack.checkCondition, stack.region);
+                                    stack.cliCommandOutputParameterMappings, stack.checkCondition, effectiveRegion);
                         }
                     }
                 }
@@ -1479,34 +1570,62 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
     }
 
     /**
-     * This function test to see if the current region conditon is statisfied.  If the current region mapping is null
-     * then it is assumed that there are no region restrictions and the mapping is allowed.  If the region is specified
-     * and it matches the current region (which is picked up from the credential chain); then it is satisfied ant
-     * the mapping is allowed to continue.  Otherwise, the condition is not satisfied and the mapping is not allowed
-     * to continue.
+     * This function test to see if the current region condition is satisfied and the current region exclusion is not satisfied.
+     * If the current region mapping and exclusion are null, then it is assumed that there are no region restrictions and the mapping
+     * is allowed.  A validRegion or an excludeRegion may be specified but not both.  One must be null.  Both parameter can be null.
+     * If the region is specified and it matches the current region then it is satisfied and the mapping is allowed
+     * to continue.  If an region is excluded and the current region matches the exclusion, the template is not allowed to continue.
+     * The current region is set by the deploymentRegionOverride, if set.  Otherwise, the current region is set from the default
+     * credentials chain.
      *
      * @param validRegion is the value of the region where the mapping is allowed.  It may be null.
+     * @param excludeRegion is the value of a region where the mapping is excluded.  It may be null.
      * @return a flag signaling if the mapping is allowed or not.
      * @throws MojoExecutionException when the specified region is not null and not a valid region.
      */
-    private boolean testRegionCondition(String validRegion) throws MojoExecutionException {
+    private boolean testRegionCondition(String validRegion, String excludeRegion) throws MojoExecutionException {
 
         boolean result = true;
 
-        if(validRegion != null) {
+        if((validRegion != null) || (excludeRegion != null)) {
 
-            Region region = Region.of(validRegion);
-            if(region == null) throw new MojoExecutionException("Invalided region specified");
+            if((validRegion != null) && (excludeRegion != null))
+                throw new MojoExecutionException("Can not specifiy a valid region and a region exclusion.");
 
-            DefaultAwsRegionProviderChain chain = new DefaultAwsRegionProviderChain();
+            Region region = validRegion != null ? Region.of(validRegion) : null;
+            if((region == null) && (validRegion != null)) throw new MojoExecutionException("Invalid region specified.");
 
-            Region currentRegion =  chain.getRegion();
-            if(currentRegion == null) currentRegion = Region.US_EAST_1;
+            Region exclusion = excludeRegion != null ? Region.of(excludeRegion) : null;
+            if((exclusion == null) && (excludeRegion != null)) throw new MojoExecutionException("Invalid exclusion specified.");
 
-            result = region == currentRegion;
+            Region currentRegion = effectiveRegion();
+
+            result = ((validRegion != null) && (region == currentRegion)) ||
+                    ((excludeRegion != null) && (exclusion != currentRegion));
         }
 
         return result;
+    }
+
+    /**
+     * Retrieves the effective region which is the deployment override region when it is specified.  Otherwise, it is the region
+     * defined in the default credentials chain.
+     *
+     * @return The effective region to use.
+     * @throws MojoExecutionException is called when the specified deployment override region doesn't exist.
+     */
+    private Region effectiveRegion() throws MojoExecutionException {
+        Region currentRegion;
+        if(deploymentRegionOverride == null) {
+            DefaultAwsRegionProviderChain chain = new DefaultAwsRegionProviderChain();
+            currentRegion = chain.getRegion();
+            if(currentRegion == null) currentRegion = Region.US_EAST_1;
+
+        } else {
+            currentRegion = Region.of(deploymentRegionOverride);
+            if(currentRegion == null) throw new MojoExecutionException("Invalid override region specified.");
+        }
+        return currentRegion;
     }
 
     /**
@@ -1535,7 +1654,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
                 if (((mapping.condition == null) || conditions.get(mapping.condition)) &&
                         evaluateCheckCondition(mapping.checkCondition, outputParameters) &&
-                        testRegionCondition(mapping.regionCondition)) {
+                        testRegionCondition(mapping.regionCondition, mapping.regionConditionExclude)) {
 
                     // Retrieve the credential values and set them for passing to the environment variables.
                     HashMap<String, String> environmentMap = new HashMap<>();
