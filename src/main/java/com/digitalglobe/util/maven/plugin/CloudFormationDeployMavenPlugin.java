@@ -2570,7 +2570,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
             } catch (ParameterNotFoundException ex) {
 
                 if(paramItem.parameterValue != null) parameterValue = paramItem.parameterValue;
-                else throw new MojoExecutionException("Parameter not found.");
+                else throw new MojoExecutionException("Parameter not found: " + paramItem.parameterStoreFieldName);
             }
 
         } else {
