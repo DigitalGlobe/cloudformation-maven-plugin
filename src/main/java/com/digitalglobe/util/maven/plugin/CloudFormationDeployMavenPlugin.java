@@ -1444,7 +1444,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
                 // Read the stack parameters.
                 Parameter[] parameters = getInputParameters(stackParameterFilePath, credentials, inputParameters,
-                        outputParameters);
+                        outputParameters, region);
 
                 if((inputParameters != null) && Arrays.stream(inputParameters).anyMatch(sha)) Thread.sleep(10000);
 
@@ -2461,12 +2461,14 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
      * @param credentials is a set of credentials to use when accessing the System Manager Parameter Store.
      * @param inputParameters is the stack input parameter instructions to use for parameter mappings.
      * @param outputParameters is the array of output parameters from other stacks that have run.
+     * @param region is the region the stack will execute or read from.
      * @return the array of parameters produced after reading them from the file and applying the map instructions.
      * @throws IOException when having problems reading the parameters from the input parameters file.
      * @throws MojoExecutionException when validation or logic errors occur.
      */
     private Parameter[] getInputParameters(String stackParameterFilePath, AwsCredentialsProvider credentials,
-                                           StackInputParameter[] inputParameters, Map<String, String> outputParameters)
+                                           StackInputParameter[] inputParameters, Map<String, String> outputParameters,
+                                           String region)
             throws IOException, MojoExecutionException {
 
         File file = new File(stackParameterFilePath);
@@ -2482,7 +2484,12 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
         // Update the input parameters with values from the output parameters of previous stack runs.
         if (inputParameters != null) {
 
-            SsmClient client = (credentials != null) ?
+            SsmClient client;
+            if(region != null) client = (credentials != null) ?
+                    new ClientBuilder<SsmClient>().withRegion(region).build(ssmBuilder, credentials) :
+                    new ClientBuilder<SsmClient>().withRegion(region).build((ssmBuilder));
+
+            else client = (credentials != null) ?
                     new ClientBuilder<SsmClient>().build(ssmBuilder, credentials) :
                     new ClientBuilder<SsmClient>().build(ssmBuilder);
 
