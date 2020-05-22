@@ -1051,7 +1051,9 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
     private FileWriter audit = null;
 
     /**
-     * Used to specify a region for the stack to be created in.
+     * An optional field for specifying an override of the region in the client constructors for CloudFormation API.
+     *
+     * @parameter region is the region in AWS to connect to.
      */
     private String region = null;
 
