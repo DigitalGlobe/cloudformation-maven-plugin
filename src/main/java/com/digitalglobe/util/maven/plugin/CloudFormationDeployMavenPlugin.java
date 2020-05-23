@@ -1135,7 +1135,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
             for(int itemCount = 0; itemCount < stackParameterFileCount; itemCount++) {
 
                 // Renew S3 client
-                String currentRegion = region == null ? effectiveRegion().toString() : region;
+                String currentRegion = effectiveRegion().toString();
                 S3Client s3Client = (sessionCredentials != null) ?
                         new ClientBuilder<S3Client>().withRegion(currentRegion).build(s3Builder, sessionCredentials) :
                         new ClientBuilder<S3Client>().withRegion(currentRegion).build(s3Builder);
