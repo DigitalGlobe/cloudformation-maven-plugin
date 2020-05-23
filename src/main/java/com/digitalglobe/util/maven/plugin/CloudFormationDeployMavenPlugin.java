@@ -1135,7 +1135,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
             for(int itemCount = 0; itemCount < stackParameterFileCount; itemCount++) {
 
                 // Renew S3 client
-                String currentRegion = effectiveRegion().toString();
+                String currentRegion = region == null ? effectiveRegion().toString() : region;
                 S3Client s3Client = (sessionCredentials != null) ?
                         new ClientBuilder<S3Client>().withRegion(currentRegion).build(s3Builder, sessionCredentials) :
                         new ClientBuilder<S3Client>().withRegion(currentRegion).build(s3Builder);
@@ -1162,13 +1162,15 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
                 CloudFormationAsyncClient cfAsyncClient;
                 boolean testedRegionCondition = testRegionCondition(regionCondition, regionConditionExclude);
-                if((regionCondition != null) && !testedRegionCondition && regionConditionElseStackReadOnly) region = regionCondition;
-                else {
-                    if((regionCondition != null) && testedRegionCondition) region = regionCondition;
+                if((regionCondition != null) && !testedRegionCondition && regionConditionElseStackReadOnly) {
+                    region = region == null ? regionCondition : region;
+
+                } else {
+                    if((regionCondition != null) && testedRegionCondition) region = region == null ? regionCondition : region;
                     else if((region == null) && (deploymentRegionOverride != null)) region = deploymentRegionOverride;
                 }
 
-                System.out.println("Region: " + (region == null ? "Empty" : region));
+                System.out.println("Region: " + (region == null ? "Default" : region));
                 if(sessionCredentials != null) cfAsyncClient = (region == null) ?
                         new ClientBuilder<CloudFormationAsyncClient>().build(cfAsyncBuilder, sessionCredentials) :
                         new ClientBuilder<CloudFormationAsyncClient>().withRegion(region).build(cfAsyncBuilder, sessionCredentials);
@@ -1216,11 +1218,14 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                         // Renew S3 client
                         testedRegionCondition = testRegionCondition(stack.regionCondition, stack.regionConditionExclude);
                         if((stack.regionCondition != null) && !testedRegionCondition && stack.regionConditionElseStackReadOnly) {
-                            stack.region = stack.regionCondition;
+                            stack.region = stack.region == null ? stack.regionCondition : stack.region;
 
                         } else {
-                            if ((stack.regionCondition != null) && testedRegionCondition) stack.region = stack.regionCondition;
-                            else if ((stack.region == null) && (deploymentRegionOverride != null)) stack.region = deploymentRegionOverride;
+                            if ((stack.regionCondition != null) && testedRegionCondition) {
+                                stack.region = stack.region == null ? stack.regionCondition : stack.region;
+
+                            } else if ((stack.region == null) && (deploymentRegionOverride != null))
+                                stack.region = deploymentRegionOverride;
                         }
 
                         System.out.println("Stack Region: " + (stack.region == null ? "Empty" : stack.region));
