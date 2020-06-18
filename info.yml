@@ -1,0 +1,8 @@
+data_classification:
+  - public
+
+poc:
+  - name: Michael Leedahl
+    email: michael.leedahl@maxar.com
+  - name: Advanced Product
+    email: DL-AWS-OGC-Testbed@digitalglobe.com
