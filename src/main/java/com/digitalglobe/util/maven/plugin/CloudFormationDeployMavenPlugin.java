@@ -671,6 +671,22 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
         private String region = null;
 
         /**
+         * Override the bucket to use when storing CloudFormation Templates for the specified stack.
+         * A null value indicates that the bucket from the Master stack should be used.
+         *
+         * @parameter templateS3Bucket is the location to store CF Templates.
+         */
+        private String templateS3Bucket = null;
+
+        /**
+         * Override the prefix to us when storing CloudFormation Templates for the specified stack.
+         * A null value indicates that the template prefix from the master stack should be used.
+         *
+         * @parameter templateS3Prefix is the prefix to use when storing CloudFormation Templates.
+         */
+        private String templateS3Prefix = null;
+
+        /**
          * Sets the role to use with this stack.
          *
          * @param roleArn is the role to use.
@@ -1259,14 +1275,17 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                                 stack.stackNamePrefix + "-" + UUID.randomUUID().toString() + "Stack" :
                                 stack.stackName;
 
+                        String tempTemplateS3Prefix = stack.templateS3Prefix != null ? stack.templateS3Prefix : templateS3Prefix;
+                        String tempTemplateS3Bucket = stack.templateS3Prefix != null ? stack.templateS3Bucket : templateS3Bucket;
+
                         templateFile = new File(stack.stackPath);
-                        templateName = (templateS3Prefix != null ? templateS3Prefix + "/" : "") +
+                        templateName = (tempTemplateS3Prefix != null ? tempTemplateS3Prefix + "/" : "") +
                                 ZonedDateTime.now().toEpochSecond() + "-" + secondaryStackName +
                                 "-" + templateFile.getName();
 
-                        templateRequest = PutObjectRequest.builder().bucket(templateS3Bucket).key(templateName).build();
+                        templateRequest = PutObjectRequest.builder().bucket(tempTemplateS3Bucket).key(templateName).build();
                         s3Client.putObject(templateRequest, RequestBody.fromFile(templateFile));
-                        templateUrl = "https://s3.amazonaws.com/" + templateS3Bucket + "/" + templateName;
+                        templateUrl = "https://s3.amazonaws.com/" + tempTemplateS3Bucket + "/" + templateName;
 
                         if(testedRegionCondition || stack.regionConditionElseStackReadOnly) {
 
