@@ -1286,6 +1286,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                         templateRequest = PutObjectRequest.builder().bucket(tempTemplateS3Bucket).key(templateName).build();
                         s3Client.putObject(templateRequest, RequestBody.fromFile(templateFile));
                         templateUrl = "https://s3.amazonaws.com/" + tempTemplateS3Bucket + "/" + templateName;
+                        if(stack.templateS3Bucket != null) audit.write("Template URL: " + templateUrl + "\n");
 
                         if(testedRegionCondition || stack.regionConditionElseStackReadOnly) {
 
