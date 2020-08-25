@@ -1276,7 +1276,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                                 stack.stackName;
 
                         String tempTemplateS3Prefix = stack.templateS3Prefix != null ? stack.templateS3Prefix : templateS3Prefix;
-                        String tempTemplateS3Bucket = stack.templateS3Prefix != null ? stack.templateS3Bucket : templateS3Bucket;
+                        String tempTemplateS3Bucket = stack.templateS3Bucket != null ? stack.templateS3Bucket : templateS3Bucket;
 
                         templateFile = new File(stack.stackPath);
                         templateName = (tempTemplateS3Prefix != null ? tempTemplateS3Prefix + "/" : "") +
