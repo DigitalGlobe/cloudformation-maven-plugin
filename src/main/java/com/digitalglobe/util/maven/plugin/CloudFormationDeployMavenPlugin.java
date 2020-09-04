@@ -1788,6 +1788,7 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                                     }
 
                                     parameter = ((LinkedHashMap) parameter).get(name);
+                                    if(parameter == null) break;
                                     array = matcher.group(3);
                                 }
                             }
