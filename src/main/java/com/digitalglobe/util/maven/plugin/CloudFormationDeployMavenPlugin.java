@@ -25,6 +25,7 @@ import software.amazon.awssdk.services.sts.model.Credentials;
 import software.amazon.awssdk.services.sts.model.GetCallerIdentityRequest;
 import software.amazon.awssdk.services.sts.model.GetCallerIdentityResponse;
 
+import javax.swing.plaf.basic.BasicInternalFrameTitlePane;
 import java.io.*;
 import java.nio.file.*;
 import java.security.MessageDigest;
@@ -1751,13 +1752,15 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
 
                         for (String key : mapping.parameters.keySet()) {
 
-                            Pattern pattern = Pattern.compile("^(/[A-Za-z0-9_-]+(\\[[A-Za-z0-9_/= -]+\\])?)+$");
+                            Pattern pattern = Pattern.compile("^(/[A-Za-z0-9_-]+(\\[[A-Za-z0-9_/= -]+\\])*)+$");
                             Matcher matcher = pattern.matcher(mapping.parameters.get(key).parameterName);
                             if(!matcher.matches()) throw new MojoExecutionException("Invalid parameter name syntax.");
 
                             String[] pathElements = mapping.parameters.get(key).parameterName.split("/(?!(?:[^\\[]+\\]))");
                             Object parameter = map;
                             String array = null;
+                            String lastElement = "";
+                            String fullArray = null;
                             for (String element : pathElements) {
 
                                 if(array == null) {
@@ -1771,26 +1774,75 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
                                         throw new MojoExecutionException("Element is not an Array.");
                                 }
 
-                                if (element.length() > 0) {
+                                boolean search = true;
+                                String nextElement = null;
+                                while ((element.length() > 0) && search) {
 
                                     pattern = Pattern.compile(
-                                            "^([A-Za-z0-9_-]+)(\\[([0-9]+|[A-Za-z0-9_-]+=[A-Za-z0-9_ /-]+)\\])?$");
+                                            "^(([A-Za-z0-9_-]+)(\\[([0-9]+|[A-Za-z0-9_-]+=[A-Za-z0-9_ /-]+)\\])*|" +
+                                                    "(\\[([0-9]+|[A-Za-z0-9_-]+=[A-Za-z0-9_ /-]+)\\])+)$");
 
                                     matcher = pattern.matcher(element);
                                     if (!matcher.matches())
                                         throw new MojoExecutionException("Couldn't find parameter: " + element);
 
-                                    String name = matcher.group(1);
+                                    String name = matcher.group(2);
                                     if (array != null) {
 
-                                        parameter = processArray(parameter, array, false);
-                                        if(parameter == null) break;
-                                    }
+                                        if (nextElement != null) {
 
-                                    parameter = ((LinkedHashMap) parameter).get(name);
+                                            array = matcher.group(4);
+                                            fullArray = matcher.group(3);
+                                        }
+
+                                        if (array != null) {
+                                            parameter = processArray(parameter, array, false);
+                                            if (parameter == null) break;
+                                            if (parameter.getClass().isAssignableFrom(ArrayList.class)) {
+
+                                                if (nextElement == null) nextElement = element;
+                                                element = lastElement.replace(fullArray, "");
+                                                lastElement = element;
+                                                continue;
+
+                                            } else {
+
+                                                String testElement = lastElement.replace(fullArray, "");
+                                                if (testElement.contains("[")) {
+
+                                                    parameter = null;
+                                                    break;
+                                                }
+
+                                                if (nextElement != null) {
+                                                    element = nextElement;
+                                                    continue;
+                                                }
+
+                                                search = false;
+                                            }
+
+                                        } else {
+
+                                            if (parameter.getClass().isAssignableFrom(ArrayList.class)) {
+                                                parameter = null;
+                                                break;
+                                            }
+
+                                            search = false;
+                                        }
+
+                                    } else search = false;
+
+                                    if (parameter.getClass().isAssignableFrom(LinkedHashMap.class))
+                                        parameter = ((LinkedHashMap) parameter).get(name);
+
                                     if(parameter == null) break;
-                                    array = matcher.group(3);
+                                    fullArray = matcher.group(3);
+                                    array = matcher.group(4);
                                 }
+
+                                lastElement = element;
                             }
 
                             if ((parameter == null) || !parameter.getClass().isAssignableFrom(String.class)) {
@@ -1855,12 +1907,12 @@ public class CloudFormationDeployMavenPlugin extends AbstractMojo {
             List list = (List)((ArrayList)parameter)
                     .stream()
                     .filter(item -> ((LinkedHashMap)item).get(arrayMatcher.group(1))
+                            .toString()
                             .equals(arrayMatcher.group(2)))
                     .collect(Collectors.toList());
 
-            if(list.size() > 1) throw new MojoExecutionException("Too many matches.");
-            if(list.size() == 1) parameter = list.get(0);
-            else parameter = null;
+            if (list.size() > 1) parameter = list;
+            else parameter = list.size() == 1 ? list.get(0) : null;
         }
 
         return parameter;
